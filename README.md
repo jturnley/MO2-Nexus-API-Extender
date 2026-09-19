@@ -321,7 +321,7 @@ The vault holds itself to these, and a plugin borrowing the key should too:
 
 ## API stability
 
-**1.2.1. The published interface is stable.**
+**1.0.0. The published interface is stable.**
 
 Everything in `nexus_key_vault/api.py` and the `NexusClient` methods listed
 above will keep working: names, arguments and return shapes. New calls may be
