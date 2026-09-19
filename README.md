@@ -155,7 +155,7 @@ you by `api.client()`, or directly when you only need public v2 queries.
 
 | call | API | key | returns |
 |---|---|---|---|
-| `graphql(query, variables=None)` | v2 | no | the `data` block, `dict` |
+| `graphql(query, variables=None)` | v2 | never sent | the `data` block, `dict` |
 | `game_id(domain)` | v2 | no | `int` or `None` |
 | `mod(game_id, mod_id)` | v2 | no | `dict` - modId, name, version, adult, category |
 | `requirements(game_id, mod_id)` | v2 | no | `list[dict]` - `modId`, `notes` |
@@ -180,6 +180,13 @@ wrapped here. The endpoint lists are in
 
 `rest` and `v3` raise `NexusError` immediately rather than firing a request
 that is certain to come back 401.
+
+**v2 calls never carry your key**, even when one is stored. v2's public half
+needs no credential and bills against a different allowance from v1, so
+attaching a key would move a free request onto the metered one — and a plugin
+sweeping a whole modlist could then spend an allowance MO2 needs for its own
+downloads. v2's genuinely private half wants an OAuth token, which an API key
+is not, so there is nothing to weigh against that.
 
 **Rate limiting is built in** - 0.35s between requests, comfortably inside
 v1's 100/minute. The key is shared, so the quota is too: a plugin that drains
@@ -314,7 +321,7 @@ The vault holds itself to these, and a plugin borrowing the key should too:
 
 ## API stability
 
-**1.2.0. The published interface is stable.**
+**1.2.1. The published interface is stable.**
 
 Everything in `nexus_key_vault/api.py` and the `NexusClient` methods listed
 above will keep working: names, arguments and return shapes. New calls may be

@@ -228,11 +228,13 @@ class NexusClient:
         headers = {"Content-Type": "application/json",
                    "Accept": "application/json",
                    "User-Agent": self.user_agent}
-        if self.key:
-            # Harmless, and enough for some fields. v2's genuinely private
-            # half wants an OAuth token instead, which this vault does not
-            # hold - so do not assume a key unlocks all of v2.
-            headers["apikey"] = self.key
+        # The key is deliberately NOT sent on v2. It was, and it was not
+        # harmless: v2's public half needs no credential and bills against
+        # a different allowance from v1, so attaching a key moves a free
+        # request onto the metered one - and a caller sweeping a modlist
+        # can then exhaust an allowance MO2 needs for downloads. v2's
+        # genuinely private half wants an OAuth token, which a key is not,
+        # so authenticating here buys nothing to weigh against that.
         payload = self._open(urllib.request.Request(
             GRAPHQL, data=json.dumps(body).encode("utf-8"), headers=headers))
         errors = payload.get("errors")
