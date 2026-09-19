@@ -23,6 +23,7 @@ client would be the wrong shape for everybody.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import urllib.error
@@ -78,11 +79,46 @@ class NexusClient:
         self.user_agent = user_agent
         self.timeout = timeout
         self.cache = cache
+        # When set, cached answers are ignored and whatever comes back
+        # replaces them. See refreshing().
+        self.refresh = False
         # What Nexus last said is left of the user's allowance. The key is
         # shared, so the quota is too: a plugin that drains it takes MO2's
         # downloads and every other plugin down with it.
         self.rate_limit: dict[str, int] = {}
         self._last = 0.0
+
+    @contextlib.contextmanager
+    def refreshing(self, on: bool = True):
+        """Ignore cached answers inside this block, and replace them.
+
+            with nexus.refreshing():
+                fresh = nexus.mod(game, mod_id)
+
+        For when a user has asked for an answer rather than merely needing
+        one - a Refresh button, or a re-check of something they just
+        changed on Nexus. Stale-but-fast is the right default for a
+        background sweep and the wrong one for an explicit request.
+
+        This is a refresh, not a bypass: the result is written back, so
+        the next caller gets the new answer rather than the old one. A
+        plugin that wants no caching at all should ask for its client
+        with ``cache=False`` instead.
+
+        Restores the previous setting on the way out, including after an
+        exception, so a client shared across a session cannot be left
+        permanently refreshing by a failed run.
+
+        Scope it as tightly as you can. Wrapping a whole modlist sweep in
+        this asks Nexus for hundreds of records it already had, which is
+        the cost the cache exists to avoid.
+        """
+        was = self.refresh
+        self.refresh = bool(on)
+        try:
+            yield self
+        finally:
+            self.refresh = was
 
     def _cached(self, kind: str, material: str, fetch):
         """Serve from the cache, or fetch and store the result.
@@ -90,10 +126,15 @@ class NexusClient:
         Only successful reads and 404s are stored. A 401, a 429, a server
         error or a dropped connection is passed straight through: caching
         a transient failure would turn it into a lasting one.
+
+        Under refresh the stored answer is skipped but still replaced, so
+        a refresh that fails leaves the old answer in place rather than
+        emptying the cache and costing the next run as well.
         """
         if self.cache is None:
             return fetch()
-        hit, value = self.cache.get(kind, material)
+        hit, value = (False, None) if self.refresh else self.cache.get(
+            kind, material)
         if hit:
             if value is None:
                 raise NexusError("Nexus has no such record (404).", 404)

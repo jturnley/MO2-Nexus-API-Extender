@@ -442,6 +442,72 @@ def test_portable_plaintext_never_hits_disk():
         check(KEY[8:32].encode("utf-8") not in raw, "no fragment either")
 
 
+def test_refresh_ignores_the_cache_but_replaces_it():
+    with tempfile.TemporaryDirectory() as folder:
+        store = cache_mod.Cache(os.path.join(folder, "c.json"))
+        calls = []
+
+        def fetch(value):
+            def go():
+                calls.append(value)
+                return value
+            return go
+
+        nexus = client.NexusClient(cache=store)
+        check(nexus._cached("mod", "m", fetch("old")) == "old", "fetched")
+        check(nexus._cached("mod", "m", fetch("old")) == "old", "cached")
+        check(len(calls) == 1, "served from cache the second time")
+        with nexus.refreshing():
+            check(nexus._cached("mod", "m", fetch("new")) == "new",
+                  "refresh ignores the cached answer")
+        check(len(calls) == 2, "refresh really fetched")
+        # The point of refresh over bypass: everyone else gets the new one.
+        check(nexus._cached("mod", "m", fetch("unused")) == "new",
+              "and the new answer replaced the old")
+        check(len(calls) == 2, "without another request")
+
+
+def test_a_failed_refresh_leaves_the_old_answer():
+    # Emptying the cache on a failed refresh would cost the next run too,
+    # for no benefit: a stale answer beats no answer here.
+    with tempfile.TemporaryDirectory() as folder:
+        store = cache_mod.Cache(os.path.join(folder, "c.json"))
+        nexus = client.NexusClient(cache=store)
+        nexus._cached("mod", "m", lambda: "old")
+
+        def boom():
+            raise client.NexusError("nexus is having a day", 503)
+
+        try:
+            with nexus.refreshing():
+                nexus._cached("mod", "m", boom)
+            check(False, "the error must reach the caller")
+        except client.NexusError:
+            check(True, "error raised")
+        check(nexus._cached("mod", "m", lambda: "fetched again") == "old",
+              "the old answer survived a failed refresh")
+
+
+def test_refreshing_restores_itself():
+    nexus = client.NexusClient()
+    check(nexus.refresh is False, "off by default")
+    with nexus.refreshing():
+        check(nexus.refresh is True, "on inside")
+    check(nexus.refresh is False, "off again")
+    try:
+        with nexus.refreshing():
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    # A client is shared for a whole session, so a failed run must not
+    # leave it refreshing for everything that follows.
+    check(nexus.refresh is False, "off again after an exception")
+    with nexus.refreshing():
+        with nexus.refreshing(False):
+            check(nexus.refresh is False, "nests")
+        check(nexus.refresh is True, "and unwinds")
+
+
 for name, fn in sorted(list(globals().items())):
     if name.startswith("test_"):
         fn()

@@ -165,6 +165,7 @@ you by `api.client()`, or directly when you only need public v2 queries.
 | `mod_v3(domain, mod_id)` | v3 | **yes** | `dict` - by the id in the site URL |
 | `file_dependencies(file_version_id)` | v3 | **yes** | `dict` - per-file requirements |
 | `has_key` | - | - | `bool` property |
+| `refreshing()` | - | - | context manager - ignore cached answers inside the block and replace them |
 | `remaining(which="hourly")` | v1 | - | `int` or `None` - allowance left |
 | `rate_limit` | - | - | `dict` - what Nexus last reported |
 
@@ -229,6 +230,31 @@ Pass `cache=False` if you keep a cache of your own. A caller sweeping a whole
 modlist usually wants one shaped like its own problem, and paying for two is
 worse than paying for one.
 
+#### Asking for a fresh answer
+
+Stale-but-fast is right for a background sweep and wrong when a user has
+pointed at something and asked about it - a Refresh button, or a re-check of
+a mod they just changed. `refreshing()` skips the stored answer and writes
+whatever comes back:
+
+```python
+with nexus.refreshing():
+    current = nexus.mod(game, mod_id)     # asked, not remembered
+```
+
+It is a refresh rather than a bypass: **the result replaces the cached one**,
+so the next caller gets the new answer instead of repeating the request. If a
+refresh fails, the old answer is left in place rather than the entry being
+emptied - a stale answer beats none, and emptying it would cost the next run
+as well. The previous setting is restored on the way out, including after an
+exception, so a client held for a whole session cannot be left permanently
+refreshing by one failed run.
+
+**Scope it tightly.** Wrapping a whole modlist sweep in this asks Nexus for
+hundreds of records it already had, which is the cost the cache exists to
+avoid. Refresh what the user asked about; serve the rest from cache. If you
+want no caching at all, ask for the client with `cache=False` instead.
+
 ### No key, but still useful
 
 `api.client()` returns `None` when no key is stored. v2's public queries need
@@ -288,7 +314,7 @@ The vault holds itself to these, and a plugin borrowing the key should too:
 
 ## API stability
 
-**1.1.0. The published interface is stable.**
+**1.2.0. The published interface is stable.**
 
 Everything in `nexus_key_vault/api.py` and the `NexusClient` methods listed
 above will keep working: names, arguments and return shapes. New calls may be
