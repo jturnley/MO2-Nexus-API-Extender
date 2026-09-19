@@ -93,6 +93,9 @@ it works, but shows up in that list as "unnamed plugin".
 | `api.explain(exc)` | `str` | an error in words, built from the status code |
 | `api.storage(organizer)` | `str` | path to the vault file |
 | `api.open_vault(organizer)` | `Vault` | the vault object; see the caveat below |
+| `api.open_cache(organizer)` | `Cache` or `None` | the shared response cache |
+| `api.cache_path(organizer)` | `str` | path to the cache file |
+| `api.Cache(path)` | `Cache` | a cache of your own, somewhere else |
 
 `NexusClient` and `NexusError` are re-exported from `api`, so you never need
 to import a private module path.
@@ -117,6 +120,8 @@ you by `api.client()`, or directly when you only need public v2 queries.
 | `mod_v3(domain, mod_id)` | v3 | **yes** | `dict` - by the id in the site URL |
 | `file_dependencies(file_version_id)` | v3 | **yes** | `dict` - per-file requirements |
 | `has_key` | - | - | `bool` property |
+| `remaining(which="hourly")` | v1 | - | `int` or `None` - allowance left |
+| `rate_limit` | - | - | `dict` - what Nexus last reported |
 
 Three of those are escape hatches rather than wrappers: `graphql`, `rest` and
 `v3` take anything the API offers, so you are never limited to what is
@@ -131,9 +136,68 @@ wrapped here. The endpoint lists are in
 that is certain to come back 401.
 
 **Rate limiting is built in** - 0.35s between requests, comfortably inside
-v1's 100/minute. **Nothing is cached.** A caller about to ask about nine
-hundred mods wants a cache shaped like its own problem, and one built into a
-shared client would be the wrong shape for everybody.
+v1's 100/minute. The key is shared, so the quota is too: a plugin that drains
+it takes MO2's downloads and every other plugin down with it. v1 reports what
+is left on every response, and `remaining()` passes that on - a caller about
+to make hundreds of requests should stop short of zero rather than spend the
+last of an allowance that is not really its own.
+
+```python
+left = nexus.remaining()                 # None until a v1 call has answered
+if left is not None and left < 50:
+    stop_early()
+```
+
+### Caching
+
+`api.client()` caches responses on disk by default, in a file **shared with
+every other plugin** - so two plugins asking about the same mod cost one
+request between them, and a second scan does not re-ask for what has not
+changed. The quota is the user's, and MO2 needs its share afterwards.
+
+Lifetimes match how fast the data actually ages:
+
+| kind | lives | what |
+|---|---|---|
+| `game` | 30 days | a game's id and its category table |
+| `mod` | 24 hours | names, versions, categories, requirements |
+| `raw` | 1 hour | whatever a caller asked for directly |
+| a 404 | 6 hours | so a deleted page is asked about once, not once per run |
+
+**Only successful reads and 404s are stored.** A 401, a 429, a server error
+or a dropped connection is never cached - caching a passing problem would
+turn it into a lasting one. GraphQL mutations are never cached either, and
+anything the parser cannot confidently read as a query gets a live request.
+
+```python
+nexus = api.client(organizer, "My Plugin")     # cached
+nexus = api.client(organizer, "My Plugin", cache=False)   # not
+...
+nexus.cache.save()      # when your run finishes
+```
+
+`save()` is yours to call - forgetting only means the next run starts cold.
+`nexus.cache.summary()` gives a line you can show the user, and
+`nexus.cache.clear()` empties it.
+
+Pass `cache=False` if you keep a cache of your own. A caller sweeping a whole
+modlist usually wants one shaped like its own problem, and paying for two is
+worse than paying for one.
+
+### No key, but still useful
+
+`api.client()` returns `None` when no key is stored. v2's public queries need
+no credential, so a caller that only wants those should ask for a keyless
+client rather than give up:
+
+```python
+nexus = api.client(organizer, "My Plugin", require_key=False)
+if nexus.has_key:
+    cats = nexus.categories("skyrimspecialedition")   # v1, needs one
+reqs = nexus.requirements(game, mod)                  # v2, does not
+```
+
+Check `has_key` before anything on v1 or v3.
 
 ### Errors
 

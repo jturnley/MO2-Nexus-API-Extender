@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 
+from . import cache as _cache
 from . import client as _client
 from . import vault as _vault
 
@@ -29,6 +30,7 @@ NexusClient = _client.NexusClient
 NexusError = _client.NexusError
 explain = _client.explain
 masked = _vault.masked
+Cache = _cache.Cache
 
 _FOLDER = "nexus_key_vault"
 
@@ -45,6 +47,24 @@ def storage(organizer) -> str:
 
 def open_vault(organizer) -> _vault.Vault:
     return _vault.Vault(storage(organizer))
+
+
+def cache_path(organizer) -> str:
+    """Where cached Nexus responses live. Shared by every plugin."""
+    return os.path.join(os.path.dirname(storage(organizer)), _cache.FILENAME)
+
+
+def open_cache(organizer):
+    """The shared response cache, or None if it cannot be opened.
+
+    Shared on purpose: two plugins asking about the same mod should cost
+    one request between them, which is the part a cache inside each
+    plugin cannot do.
+    """
+    try:
+        return _cache.Cache(cache_path(organizer))
+    except Exception:
+        return None
 
 
 def has_key(organizer) -> bool:
@@ -81,16 +101,33 @@ def key(organizer, requester: str = "") -> str:
         return ""
 
 
-def client(organizer, requester: str = "", timeout: float = _client.TIMEOUT):
+def client(organizer, requester: str = "", timeout: float = _client.TIMEOUT,
+           cache: bool = True, require_key: bool = True):
     """A `NexusClient` carrying the stored key, or None if there is none.
 
     None means "no credential available" - not "Nexus is down".  A caller
     that only needs public v2 queries can ignore it and build its own
     `NexusClient()` with no key at all, which still works.
+
+    Responses are cached on disk by default, shared with every other
+    plugin, so a second scan does not re-ask Nexus for what has not
+    changed.  Pass ``cache=False`` if you keep a cache of your own: a
+    caller sweeping a whole modlist usually wants one shaped like its own
+    problem, and paying for two is worse than paying for one.
+
+    Call ``nexus.cache.save()`` when your run finishes.  Forgetting only
+    means the next run starts cold.
+
+    ``require_key=False`` returns a keyless client instead of None when
+    nothing is stored.  That is what a caller wanting v2's public queries
+    should pass: those need no credential, and refusing to hand back a
+    client would break them for every user who has not stored a key.
+    Check ``nexus.has_key`` before calling anything on v1 or v3.
     """
     found = key(organizer, requester)
-    if not found:
+    if not found and require_key:
         return None
     agent = "{}/1.0".format(
         (requester or "MO2-Plugin").replace(" ", "-").replace("/", "-"))
-    return _client.NexusClient(found, user_agent=agent, timeout=timeout)
+    return _client.NexusClient(found, user_agent=agent, timeout=timeout,
+                               cache=open_cache(organizer) if cache else None)

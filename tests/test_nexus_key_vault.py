@@ -15,7 +15,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nexus_key_vault import api, client, dpapi, migrate, vault  # noqa: E402
+from nexus_key_vault import api, cache as cache_mod, client, dpapi, migrate, vault  # noqa: E402
 
 KEY = "abcdefgh-1234-5678-9012-abcdefghijkl-Zm9vYmFyYmF6cXV4WQ=="
 checks = 0
@@ -178,6 +178,93 @@ def test_errors_never_carry_the_key():
     check("401" in message, "status explained")
     check("429" in client.explain(type("E", (Exception,), {"code": 429})()),
           "rate limit explained")
+
+
+def test_cache_round_trip_and_expiry():
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_cache.json")
+        store = cache_mod.Cache(path)
+        check(store.get("mod", "a") == (False, None), "cold cache misses")
+        store.put("mod", "a", {"name": "x"})
+        check(store.get("mod", "a") == (True, {"name": "x"}), "then hits")
+        store.save()
+        check(cache_mod.Cache(path).get("mod", "a")[0], "survives a reload")
+
+        # An entry past its life is gone, not merely stale.
+        store.put("mod", "b", {"name": "y"}, ttl=-1)
+        check(store.get("mod", "b") == (False, None), "expired entry misses")
+        store.save()
+        reloaded = cache_mod.Cache(path)
+        check(reloaded.get("mod", "b") == (False, None), "stays gone")
+        check(reloaded.size == 1, "and is dropped from the file entirely")
+
+
+def test_cache_key_never_contains_the_credential():
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_cache.json")
+        store = cache_mod.Cache(path)
+        store.put("raw", "v1/games/skyrimspecialedition.json", {"ok": 1})
+        store.save()
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        check(KEY.encode("utf-8") not in blob, "no key in the cache file")
+        # The same request cached under one key must be readable under
+        # another: the key is not part of what identifies a response.
+        a = client.NexusClient(KEY, cache=store)
+        b = client.NexusClient("different-key-entirely", cache=store)
+        check(a._cached("raw", "same", lambda: "v") == "v", "first fetches")
+        check(b._cached("raw", "same", lambda: "other") == "v",
+              "second reads what the first stored")
+
+
+def test_cache_stores_reads_but_never_failures():
+    with tempfile.TemporaryDirectory() as folder:
+        store = cache_mod.Cache(os.path.join(folder, "c.json"))
+        nexus = client.NexusClient("k", cache=store)
+
+        def blow_up(status):
+            def fn():
+                raise client.NexusError("failed", status)
+            return fn
+
+        # A transient failure cached would outlive the problem.
+        for status in (401, 429, 500, None):
+            try:
+                nexus._cached("mod", "s{}".format(status), blow_up(status))
+            except client.NexusError:
+                pass
+            check(nexus._cached("mod", "s{}".format(status),
+                                lambda: "fresh") == "fresh",
+                  "status {} was not cached".format(status))
+
+        # A 404 is remembered, so a deleted page is asked about once.
+        try:
+            nexus._cached("mod", "gone", blow_up(404))
+        except client.NexusError:
+            pass
+        try:
+            nexus._cached("mod", "gone", lambda: "should not be called")
+            check(False, "a cached 404 should still raise")
+        except client.NexusError as exc:
+            check(exc.status == 404, "and raises 404 without a request")
+
+
+def test_mutations_are_never_cached():
+    check(client.NexusClient._is_read("query($g: ID!) { game { id } }"),
+          "a named query is a read")
+    check(client.NexusClient._is_read("{ game(domainName: \"x\") { id } }"),
+          "a bare selection is a read")
+    check(not client.NexusClient._is_read("mutation { endorse(id: 1) }"),
+          "a mutation is not")
+    check(not client.NexusClient._is_read("  MUTATION { x }"),
+          "case and padding do not smuggle one past")
+
+
+def test_client_without_a_cache_still_works():
+    nexus = client.NexusClient("k")
+    check(nexus.cache is None, "no cache by default")
+    check(nexus._cached("mod", "x", lambda: "live") == "live",
+          "calls straight through")
 
 
 def test_readme_documents_every_published_call():

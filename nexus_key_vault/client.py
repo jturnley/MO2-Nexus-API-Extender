@@ -73,11 +73,39 @@ class NexusClient:
     """Thin, honest, and safe to hold on to for the length of one job."""
 
     def __init__(self, key: str = "", user_agent: str = "MO2-Plugin/1.0",
-                 timeout: float = TIMEOUT) -> None:
+                 timeout: float = TIMEOUT, cache=None) -> None:
         self.key = (key or "").strip()
         self.user_agent = user_agent
         self.timeout = timeout
+        self.cache = cache
+        # What Nexus last said is left of the user's allowance. The key is
+        # shared, so the quota is too: a plugin that drains it takes MO2's
+        # downloads and every other plugin down with it.
+        self.rate_limit: dict[str, int] = {}
         self._last = 0.0
+
+    def _cached(self, kind: str, material: str, fetch):
+        """Serve from the cache, or fetch and store the result.
+
+        Only successful reads and 404s are stored. A 401, a 429, a server
+        error or a dropped connection is passed straight through: caching
+        a transient failure would turn it into a lasting one.
+        """
+        if self.cache is None:
+            return fetch()
+        hit, value = self.cache.get(kind, material)
+        if hit:
+            if value is None:
+                raise NexusError("Nexus has no such record (404).", 404)
+            return value
+        try:
+            value = fetch()
+        except NexusError as exc:
+            if exc.status == 404:
+                self.cache.put_missing(kind, material)
+            raise
+        self.cache.put(kind, material, value)
+        return value
 
     @property
     def has_key(self) -> bool:
@@ -89,12 +117,37 @@ class NexusClient:
             time.sleep(PAUSE - gap)
         self._last = time.time()
 
+    HEADERS = {"hourly": "x-rl-hourly-remaining",
+               "daily": "x-rl-daily-remaining"}
+
+    def _note_limits(self, headers) -> None:
+        for name, header in self.HEADERS.items():
+            value = headers.get(header)
+            if value is None:
+                continue
+            try:
+                self.rate_limit[name] = int(value)
+            except (TypeError, ValueError):
+                continue
+
+    def remaining(self, which: str = "hourly") -> int | None:
+        """Requests left in the allowance, or None if Nexus has not said.
+
+        Only v1 reports this. A caller about to make hundreds of requests
+        should check it and stop short rather than spend the last of a
+        quota that is not really its own.
+        """
+        return self.rate_limit.get(which)
+
     def _open(self, request: urllib.request.Request):
         self._wait()
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as fh:
+                self._note_limits(fh.headers)
                 return json.load(fh)
         except urllib.error.HTTPError as exc:
+            if getattr(exc, "headers", None):
+                self._note_limits(exc.headers)
             raise NexusError(explain(exc), getattr(exc, "code", None)) from None
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             raise NexusError(explain(exc)) from None
@@ -103,13 +156,31 @@ class NexusClient:
 
     # ---- v2 ------------------------------------------------------------
 
-    def graphql(self, query: str, variables: dict | None = None) -> dict:
+    @staticmethod
+    def _is_read(query: str) -> bool:
+        """True for a query, false for anything that could write.
+
+        Conservative on purpose: a caller passing something this cannot
+        recognise gets a live request rather than a cached answer.
+        """
+        head = (query or "").strip().lstrip("{").strip().lower()
+        return head.startswith("query") or (query or "").strip().startswith("{")
+
+    def graphql(self, query: str, variables: dict | None = None,
+                cache: bool = True) -> dict:
         """Run a v2 GraphQL query and return its ``data`` block.
 
         Raises :class:`NexusError` if the server reports query errors, so
         a caller does not have to remember that GraphQL answers 200 with
         the failure inside the body.
         """
+        if cache and self.cache is not None and self._is_read(query):
+            material = json.dumps([query, variables or {}], sort_keys=True)
+            return self._cached("raw", material,
+                                lambda: self._graphql(query, variables))
+        return self._graphql(query, variables)
+
+    def _graphql(self, query: str, variables: dict | None = None) -> dict:
         body = {"query": query}
         if variables:
             body["variables"] = variables
@@ -131,6 +202,10 @@ class NexusClient:
         return payload.get("data") or {}
 
     def game_id(self, domain: str) -> int | None:
+        return self._cached("game", "game_id/" + domain,
+                            lambda: self._game_id(domain))
+
+    def _game_id(self, domain: str) -> int | None:
         data = self.graphql(
             "query($d: String!) { game(domainName: $d) { id } }",
             {"d": domain})
@@ -138,6 +213,10 @@ class NexusClient:
 
     def mod(self, game_id: int, mod_id: int) -> dict:
         """One mod's v2 record."""
+        return self._cached("mod", "mod/{}/{}".format(game_id, mod_id),
+                            lambda: self._mod(game_id, mod_id))
+
+    def _mod(self, game_id: int, mod_id: int) -> dict:
         data = self.graphql(
             "query($g: ID!, $m: ID!) {"
             " mod(gameId: $g, modId: $m) {"
@@ -153,6 +232,11 @@ class NexusClient:
         to the mod do not appear here - a mod can list three on its page
         and return none of them.
         """
+        return self._cached(
+            "mod", "requirements/{}/{}".format(game_id, mod_id),
+            lambda: self._requirements(game_id, mod_id))
+
+    def _requirements(self, game_id: int, mod_id: int) -> list[dict]:
         data = self.graphql(
             "query($g: ID!, $m: ID!) {"
             " mod(gameId: $g, modId: $m) {"
@@ -174,10 +258,12 @@ class NexusClient:
         """
         if not self.key:
             raise NexusError("The v1 API needs a key and none is stored.")
-        return self._open(urllib.request.Request(
-            "{}/{}".format(REST, path.lstrip("/")),
-            headers={"apikey": self.key, "Accept": "application/json",
-                     "User-Agent": self.user_agent}))
+        return self._cached("raw", "v1/" + path.lstrip("/"),
+                            lambda: self._open(urllib.request.Request(
+                                "{}/{}".format(REST, path.lstrip("/")),
+                                headers={"apikey": self.key,
+                                         "Accept": "application/json",
+                                         "User-Agent": self.user_agent})))
 
     # ---- v3 ------------------------------------------------------------
 
@@ -195,6 +281,10 @@ class NexusClient:
         """
         if not self.key:
             raise NexusError("The v3 API needs a key and none is stored.")
+        return self._cached("raw", "v3/" + path.lstrip("/"),
+                            lambda: self._v3(path))
+
+    def _v3(self, path: str) -> dict:
         payload = self._open(urllib.request.Request(
             "{}/{}".format(V3, path.lstrip("/")),
             headers={"apikey": self.key, "Accept": "application/json",
@@ -220,6 +310,10 @@ class NexusClient:
 
     def categories(self, domain: str) -> dict[int, str]:
         """{category id: name} for a game. v1 only, so a key is required."""
+        return self._cached("game", "categories/" + domain,
+                            lambda: self._categories(domain))
+
+    def _categories(self, domain: str) -> dict[int, str]:
         payload = self.rest("games/{}.json".format(domain))
         out: dict[int, str] = {}
         for entry in payload.get("categories") or ():
