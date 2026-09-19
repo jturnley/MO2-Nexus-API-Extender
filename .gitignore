@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local data a run produces - never source, and the cache can be large.
+nexus_cache.json
+requirement_cache.json
+user_rules.json
+nexus_key.dat
+*.bak
