@@ -80,6 +80,25 @@ else's credential: [nexus_key_vault/README.md](nexus_key_vault/README.md).
 Which API answers what — v1 vs v2 GraphQL vs v3, with the auth and stability
 of each: [docs/nexus-api-versions.md](docs/nexus-api-versions.md).
 
+## API stability
+
+**1.0.0. The published interface is stable.**
+
+Everything in `nexus_key_vault/api.py` and the `NexusClient` methods listed
+above will keep working: names, arguments and return shapes. New calls may be
+added; existing ones will not change meaning or disappear without a major
+version bump. `api.key()` and `api.client()` will keep returning `""`/`None`
+rather than raising, because callers are built on that.
+
+Not covered, and free to change: anything under `vault`, `dpapi`, `migrate`
+or `ui` reached directly, the on-disk file format, and the DPAPI entropy. Go
+through `api` and none of that is your problem.
+
+Nexus itself is the moving part. v2 GraphQL describes itself as a work in
+progress and v3 is mostly Experimental, so a method here can start returning
+different data even while its signature holds. See
+[docs/nexus-api-versions.md](docs/nexus-api-versions.md).
+
 ## Install
 
 Copy `nexus_key_vault/` into `MO2/plugins/` and restart MO2. No dependencies.
