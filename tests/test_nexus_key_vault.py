@@ -8,6 +8,7 @@ the code's intentions.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -177,6 +178,32 @@ def test_errors_never_carry_the_key():
     check("401" in message, "status explained")
     check("429" in client.explain(type("E", (Exception,), {"code": 429})()),
           "rate limit explained")
+
+
+def test_readme_documents_every_published_call():
+    """The README's API tables are the contract; drift makes them a lie.
+
+    Only the published surface is checked. Vault methods are deliberately
+    undocumented as callable API, so they are not required here.
+    """
+    import inspect
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    text = io.open(os.path.join(root, "README.md"), encoding="utf-8").read()
+
+    published = [n for n in dir(api)
+                 if not n.startswith("_")
+                 and n not in ("annotations", "os", "client")
+                 and callable(getattr(api, n))]
+    for name in published:
+        check("api.{}".format(name) in text or "`{}`".format(name) in text,
+              "README documents api." + name)
+
+    for name, member in inspect.getmembers(client.NexusClient):
+        if name.startswith("_"):
+            continue
+        if inspect.isfunction(member) or isinstance(member, property):
+            check("`{}(".format(name) in text or "`{}`".format(name) in text,
+                  "README documents NexusClient." + name)
 
 
 def test_migration_finds_and_clears():

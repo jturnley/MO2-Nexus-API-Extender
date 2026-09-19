@@ -67,18 +67,113 @@ docs/                 which Nexus API can answer what
 ```python
 from nexus_key_vault import api
 
-nexus = api.client(organizer, "My Plugin")   # None if no key available
+nexus = api.client(organizer, "My Plugin")   # None if no key is available
 if nexus is not None:
     game = nexus.game_id("skyrimspecialedition")
     for req in nexus.requirements(game, 12604):
         print(req["modId"], req.get("notes"))
 ```
 
-Never raises, never blocks. Full API and the rules for handling someone
-else's credential: [nexus_key_vault/README.md](nexus_key_vault/README.md).
+Never raises, never blocks. `None` means "no credential" - not "Nexus is
+down" - and a caller that only needs public v2 queries can build
+`NexusClient()` with no key and carry on.
 
-Which API answers what — v1 vs v2 GraphQL vs v3, with the auth and stability
-of each: [docs/nexus-api-versions.md](docs/nexus-api-versions.md).
+Pass your plugin's name as `requester`. It is recorded so the user can see
+who holds their credential, and it honours a deny set in the dialog. Omitting
+it works, but shows up in that list as "unnamed plugin".
+
+### The `api` module
+
+| call | returns | notes |
+|---|---|---|
+| `api.client(organizer, requester="", timeout=15.0)` | `NexusClient` or `None` | `None` when no key is available, denied, or the vault is absent |
+| `api.key(organizer, requester="")` | `str` | the raw key, or `""`. For callers with their own HTTP layer |
+| `api.has_key(organizer)` | `bool` | is one stored, without decrypting it |
+| `api.masked(key, tail=4)` | `str` | `"92 characters, ending WQ=="` - for your own UI |
+| `api.explain(exc)` | `str` | an error in words, built from the status code |
+| `api.storage(organizer)` | `str` | path to the vault file |
+| `api.open_vault(organizer)` | `Vault` | the vault object; see the caveat below |
+
+`NexusClient` and `NexusError` are re-exported from `api`, so you never need
+to import a private module path.
+
+None of the first three raise. A missing vault, a damaged file, or one locked
+to a different Windows account all come back as `""` / `None` / `False`.
+
+### `NexusClient`
+
+`NexusClient(key="", user_agent="MO2-Plugin/1.0", timeout=15.0)` - built for
+you by `api.client()`, or directly when you only need public v2 queries.
+
+| call | API | key | returns |
+|---|---|---|---|
+| `graphql(query, variables=None)` | v2 | no | the `data` block, `dict` |
+| `game_id(domain)` | v2 | no | `int` or `None` |
+| `mod(game_id, mod_id)` | v2 | no | `dict` - modId, name, version, adult, category |
+| `requirements(game_id, mod_id)` | v2 | no | `list[dict]` - `modId`, `notes` |
+| `rest(path)` | v1 | **yes** | `dict` - raw v1 JSON |
+| `categories(domain)` | v1 | **yes** | `dict[int, str]` - `{category id: name}` |
+| `v3(path)` | v3 | **yes** | `dict` - the response's `data` object |
+| `mod_v3(domain, mod_id)` | v3 | **yes** | `dict` - by the id in the site URL |
+| `file_dependencies(file_version_id)` | v3 | **yes** | `dict` - per-file requirements |
+| `has_key` | - | - | `bool` property |
+
+Three of those are escape hatches rather than wrappers: `graphql`, `rest` and
+`v3` take anything the API offers, so you are never limited to what is
+wrapped here. The endpoint lists are in
+[docs/nexus-api-versions.md](docs/nexus-api-versions.md).
+
+`file_dependencies` is the one neither of the others can answer: v2's
+`modRequirements` is empty for a mod whose author attached requirements to a
+*file*, which is why some mod pages list three and the API returns none.
+
+`rest` and `v3` raise `NexusError` immediately rather than firing a request
+that is certain to come back 401.
+
+**Rate limiting is built in** - 0.35s between requests, comfortably inside
+v1's 100/minute. **Nothing is cached.** A caller about to ask about nine
+hundred mods wants a cache shaped like its own problem, and one built into a
+shared client would be the wrong shape for everybody.
+
+### Errors
+
+Everything network-facing raises `NexusError`, which carries `.status` (the
+HTTP code, or `None`) and a message built from that code rather than from the
+exception's string form - so a key cannot ride out in an error. GraphQL
+answers 200 with failures inside the body; `graphql()` raises on those too,
+so you do not have to remember that.
+
+```python
+try:
+    cats = nexus.categories("skyrimspecialedition")
+except api.NexusError as exc:
+    log(str(exc))          # already safe to display
+    if exc.status == 429:
+        back_off()
+```
+
+### Not part of the published API
+
+`api.open_vault()` hands back the `Vault` object, whose `read`, `store`,
+`clear`, `note`, `allowed`, `set_allowed` and `forget` are how the dialog
+works. They are reachable, and they are **not** covered by the 1.0.0
+stability promise - `store()` and `clear()` write the user's credential.
+Read through `api.key()`, and do not write at all: if your plugin needs a key
+and the vault has none, ask the user and store it under your own plugin name.
+
+### Rules for holding someone else's credential
+
+The vault holds itself to these, and a plugin borrowing the key should too:
+
+- **Never echo it back** - not to a dialog, log, exception or crash report.
+  `api.masked()` gives you something safe to show.
+- **Build error text from the HTTP status**, not from the exception's string
+  form. That is what `api.explain()` is for.
+- **Do not store your own copy**, and never write into the vault's file.
+- **Leave rate-limit headroom.** The quota is the user's, and MO2 needs its
+  share afterwards.
+- **Survive its absence.** No key, no network, a 429, a locked vault - every
+  one of them should degrade rather than fail.
 
 ## API stability
 
