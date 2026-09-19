@@ -15,7 +15,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nexus_key_vault import api, cache as cache_mod, client, dpapi, migrate, vault  # noqa: E402
+from nexus_key_vault import api, cache as cache_mod, client, dpapi, migrate, portable, vault  # noqa: E402
 
 KEY = "abcdefgh-1234-5678-9012-abcdefghijkl-Zm9vYmFyYmF6cXV4WQ=="
 checks = 0
@@ -314,6 +314,132 @@ def test_migration_touches_only_plugin_settings():
     for owner, setting in migrate.KNOWN:
         check(owner != "Settings", "MO2's own settings are off limits")
         check("ModOrganizer" not in owner, "no core settings")
+
+
+def test_portable_round_trip():
+    material = b"some machine material"
+    sealed = portable.seal(KEY.encode("utf-8"), material,
+                           portable.SCHEME_MACHINE)
+    check(KEY.encode("utf-8") not in sealed, "sealed bytes are not the key")
+    check(sealed.startswith(portable.MAGIC), "tagged as ours")
+    check(portable.unseal(sealed, material).decode("utf-8") == KEY,
+          "round trip")
+
+
+def test_portable_rejects_wrong_secret_and_tampering():
+    material = b"right"
+    sealed = portable.seal(KEY.encode("utf-8"), material,
+                           portable.SCHEME_MACHINE)
+    try:
+        portable.unseal(sealed, b"wrong")
+        check(False, "wrong material must not open it")
+    except portable.WrongSecret:
+        check(True, "wrong material refused")
+    # Flipping any byte must be caught by the tag rather than decrypted
+    # into something that looks like a key.
+    for spot in (len(portable.MAGIC) + 2, len(sealed) // 2, len(sealed) - 1):
+        broken = bytearray(sealed)
+        broken[spot] ^= 0x40
+        try:
+            portable.unseal(bytes(broken), material)
+            check(False, "tampering must not pass")
+        except (portable.WrongSecret, portable.Tampered):
+            check(True, "tampering refused at {}".format(spot))
+    try:
+        portable.unseal(b"not ours at all", material)
+        check(False, "foreign bytes must not pass")
+    except portable.Tampered:
+        check(True, "foreign bytes refused")
+
+
+def test_portable_is_bound_to_its_folder():
+    # The point of the machine scheme is that a copied file stops working.
+    # If this ever passes, the fallback has quietly become a constant key.
+    with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
+        here = portable.machine_material(os.path.join(one, "nexus_key.dat"))
+        there = portable.machine_material(os.path.join(two, "nexus_key.dat"))
+        check(here != there, "material differs between folders")
+        sealed = portable.seal(KEY.encode("utf-8"), here,
+                               portable.SCHEME_MACHINE)
+        try:
+            portable.unseal(sealed, there)
+            check(False, "a copied file must not open")
+        except portable.WrongSecret:
+            check(True, "a copied file does not open")
+
+
+def test_passphrase_vault_locks_without_it():
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_key.dat")
+        vault.Vault(path).store(KEY, "correct horse battery")
+        blind = vault.Vault(path)
+        check(blind.has_key, "the key is there")
+        check(blind.needs_passphrase, "and it knows it needs a passphrase")
+        try:
+            blind.read()
+            check(False, "must not open without the passphrase")
+        except vault.NeedsPassphrase:
+            check(True, "refused without the passphrase")
+        blind.use_passphrase("wrong one")
+        try:
+            blind.read()
+            check(False, "must not open with the wrong passphrase")
+        except vault.Locked:
+            check(True, "refused with the wrong passphrase")
+        opened = vault.Vault(path, "correct horse battery")
+        check(opened.read() == KEY, "opens with the right passphrase")
+        check(opened.scheme == vault.PASSPHRASE, "recorded its scheme")
+
+
+def test_a_passphrase_beats_dpapi_when_asked_for():
+    # Someone who asks for a passphrase on Windows has decided they want
+    # protection that survives their account being unlocked. Honour it.
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_key.dat")
+        store = vault.Vault(path)
+        store.store(KEY, "a passphrase")
+        check(store.scheme == vault.PASSPHRASE, "passphrase wins")
+        store.store(KEY)
+        check(store.scheme == vault.best_scheme(), "and is not sticky")
+
+
+def test_the_file_never_claims_more_than_it_did():
+    # The note in the file is what a curious user reads. It must match
+    # the scheme actually used, or the plugin is lying in writing.
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_key.dat")
+        for phrase in ("", "a passphrase"):
+            vault.Vault(path).store(KEY, phrase)
+            raw = io.open(path, encoding="utf-8").read()
+            scheme = vault.Vault(path).scheme
+            check(vault.NOTES[scheme] in raw, "note matches scheme")
+            if scheme == vault.MACHINE:
+                check("not encrypted" in raw, "machine scheme says so")
+
+
+def test_wine_is_not_trusted_for_dpapi():
+    # available() is the gate the vault uses to decide whether DPAPI is
+    # worth the claim. Under Wine the answer must be no, even though the
+    # calls are present and would appear to work.
+    check(dpapi.available() == (dpapi.present() and not dpapi.wine()),
+          "real DPAPI only")
+    if dpapi.wine():
+        check(vault.best_scheme() == vault.MACHINE, "Wine falls back")
+    else:
+        check(not dpapi.present() or vault.best_scheme() == vault.DPAPI,
+              "real Windows uses DPAPI")
+
+
+def test_portable_plaintext_never_hits_disk():
+    if dpapi.available():
+        return      # covered by the DPAPI test on Windows
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, "nexus_key.dat")
+        vault.Vault(path).store(KEY)
+        raw = io.open(path, "rb").read()
+        for encoding in ("utf-8", "utf-16-le"):
+            check(KEY.encode(encoding) not in raw, "not in " + encoding)
+        check(KEY[8:32].encode("utf-8") not in raw, "no fragment either")
 
 
 for name, fn in sorted(list(globals().items())):

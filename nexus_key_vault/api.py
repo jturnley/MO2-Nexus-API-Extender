@@ -75,6 +75,19 @@ def has_key(organizer) -> bool:
         return False
 
 
+def protection(organizer) -> str:
+    """How the key is held here, as a phrase you can show a user.
+
+    Exists so a plugin reporting on the vault does not have to reach into
+    `vault` directly and risk saying something stronger than the truth -
+    on Wine the honest answer is "obfuscated", not "encrypted".
+    """
+    try:
+        return open_vault(organizer).protection()
+    except Exception:
+        return "unavailable"
+
+
 def key(organizer, requester: str = "") -> str:
     """The stored Nexus key, or "" if there is not one to give.
 

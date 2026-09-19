@@ -1,8 +1,8 @@
 # MO2 Nexus API Extender
 
-An MO2 plugin that keeps **one** Nexus API key — encrypted for your Windows
-account — and lends it to any other plugin that asks, so each one does not
-end up storing its own copy in plain text.
+An MO2 plugin that keeps **one** Nexus API key — sealed as strongly as your
+system allows — and lends it to any other plugin that asks, so each one does
+not end up storing its own copy in plain text.
 
 **Tools → Nexus API Key**
 
@@ -24,8 +24,9 @@ support threads.
 
 ## What this does
 
-- Stores one key, encrypted with **Windows DPAPI** under your user account.
-  The file is inert on another machine or another Windows account.
+- Stores one key, sealed as strongly as the platform honestly allows —
+  **Windows DPAPI** under your user account, or a **passphrase** anywhere.
+  The file is inert on another machine or another account.
 - Offers a **ready-made client** covering all three Nexus APIs, so a plugin
   borrowing the key does not have to re-derive which one answers what.
 - Sweeps known plugins' plain-text key settings and offers to **take them
@@ -40,12 +41,53 @@ Every MO2 Python plugin shares one interpreter, one process and your user
 account. Anything that can run can import this package and call `read()`.
 There is no boundary between plugins for a vault to hide behind.
 
-What encryption at rest buys is everything that happens to the *file* rather
-than in the process: backups, synced profile folders, support archives, a
+What sealing the key at rest buys is everything that happens to the *file*
+rather than in the process: backups, synced profile folders, support archives, a
 stolen drive, another account on a shared machine. Those are the common ways
 a credential actually escapes, and they are closed.
 
 The caller list is an audit and a courtesy control, not a security boundary.
+
+## Linux and macOS
+
+MO2 has no native build for either, so you are running it under Wine, Proton
+or CrossOver. **The plugin works there** — but not by using Wine's DPAPI,
+and the reason is worth stating plainly.
+
+Wine implements `CryptProtectData`, so the old version of this plugin ran
+without error on Linux and reported the key as encrypted. It wasn't, in any
+way that mattered. Wine cannot know the real keying mechanism, so it derives
+one from the username, a salt stored inside the blob, the caller's entropy,
+and a constant written into Wine's public source. Ours is in *our* public
+source. Every input is published or sitting in the file, so anyone holding
+the file could open it — which is exactly the threat DPAPI was chosen to
+close.
+
+So Wine's DPAPI is **deliberately refused**, and the vault seals the key
+itself instead, using only the standard library:
+
+| where | how the key is sealed | how strong |
+|---|---|---|
+| Windows | DPAPI, key held by the OS | the OS keeps a secret off-disk |
+| Windows + passphrase | scrypt + HMAC-SHA256 | survives even an unlocked account |
+| Wine + passphrase | scrypt + HMAC-SHA256 | real: the secret is in your head |
+| Wine, no passphrase | keyed to machine, account and folder | **obfuscation, not encryption** |
+
+The last row is the default under Wine, and the dialog says so in those
+words. It defeats a file that has been carried off — a backup, a support
+archive, a synced folder — because the host and install path are mixed into
+the key. It does not defeat anyone who reads this repository.
+
+**There is no self-contained option that is stronger than that**, and it is
+not a missing library. If the plugin can open the vault unattended, then
+everything needed to open it is on the disk, and whatever copies the file
+copies that too. DPAPI escapes this only by keeping a secret outside the
+file, in the OS. Under Wine there is no such secret to borrow, so the choice
+is a passphrase or an honest label. You get both.
+
+A key stored by an older version under Wine is read once, re-sealed under
+the new scheme, and the dialog tells you it happened — because it means the
+key was weaker on disk than that version claimed.
 
 ## Layout
 
@@ -55,10 +97,11 @@ nexus_key_vault/      the plugin - copy this folder into MO2/plugins/
   client.py           v1 / v2 / v3 Nexus client
   vault.py            the file, the key, the caller record
   dpapi.py            Windows encryption via ctypes (no pywin32)
+  portable.py         the stdlib sealer used when DPAPI cannot be trusted
   migrate.py          finding and clearing plain-text keys elsewhere
   ui.py               the one dialog
   plugin.py           MO2 wiring, deliberately thin
-tests/                40 checks - no Qt, no MO2, no network
+tests/                no Qt, no MO2, no network
 docs/                 which Nexus API can answer what
 ```
 
@@ -89,6 +132,7 @@ it works, but shows up in that list as "unnamed plugin".
 | `api.client(organizer, requester="", timeout=15.0)` | `NexusClient` or `None` | `None` when no key is available, denied, or the vault is absent |
 | `api.key(organizer, requester="")` | `str` | the raw key, or `""`. For callers with their own HTTP layer |
 | `api.has_key(organizer)` | `bool` | is one stored, without decrypting it |
+| `api.protection(organizer)` | `str` | how it is held here, in words fit to show a user — say this rather than assuming "encrypted" |
 | `api.masked(key, tail=4)` | `str` | `"92 characters, ending WQ=="` - for your own UI |
 | `api.explain(exc)` | `str` | an error in words, built from the status code |
 | `api.storage(organizer)` | `str` | path to the vault file |
@@ -100,8 +144,9 @@ it works, but shows up in that list as "unnamed plugin".
 `NexusClient` and `NexusError` are re-exported from `api`, so you never need
 to import a private module path.
 
-None of the first three raise. A missing vault, a damaged file, or one locked
-to a different Windows account all come back as `""` / `None` / `False`.
+None of these raise. A missing vault, a damaged file, one locked to a
+different Windows account, or one waiting on a passphrase all come back as
+`""` / `None` / `False`.
 
 ### `NexusClient`
 
@@ -222,6 +267,8 @@ except api.NexusError as exc:
 `clear`, `note`, `allowed`, `set_allowed` and `forget` are how the dialog
 works. They are reachable, and they are **not** covered by the 1.0.0
 stability promise - `store()` and `clear()` write the user's credential.
+The on-disk format moved to version 2 in 1.1.0 for exactly that reason;
+version 1 files are still read and upgraded in place.
 Read through `api.key()`, and do not write at all: if your plugin needs a key
 and the vault has none, ask the user and store it under your own plugin name.
 
@@ -241,7 +288,7 @@ The vault holds itself to these, and a plugin borrowing the key should too:
 
 ## API stability
 
-**1.0.0. The published interface is stable.**
+**1.1.0. The published interface is stable.**
 
 Everything in `nexus_key_vault/api.py` and the `NexusClient` methods listed
 above will keep working: names, arguments and return shapes. New calls may be

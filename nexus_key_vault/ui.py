@@ -76,7 +76,22 @@ class VaultDialog(QDialog):
         inner.addWidget(show)
 
         row = QHBoxLayout()
+        self._use_phrase = QCheckBox("Protect with a passphrase:", box)
+        row.addWidget(self._use_phrase)
+        self._phrase = QLineEdit(box)
+        self._phrase.setEchoMode(QLineEdit.EchoMode.Password)
+        self._phrase.setEnabled(False)
+        row.addWidget(self._phrase, 1)
+        self._use_phrase.toggled.connect(self._phrase.setEnabled)
+        inner.addLayout(row)
+
+        self._phrase_note = QLabel("", box)
+        self._phrase_note.setWordWrap(True)
+        inner.addWidget(self._phrase_note)
+
+        row = QHBoxLayout()
         for label, slot in (("Save", self._save), ("Test", self._test),
+                            ("Unlock", self._unlock),
                             ("Remove stored key", self._clear)):
             button = QPushButton(label, box)
             button.clicked.connect(slot)
@@ -86,36 +101,87 @@ class VaultDialog(QDialog):
 
         note = QLabel(
             "Get one from nexusmods.com -> your profile -> Site preferences "
-            "-> API keys.\n\nIt is encrypted for this Windows user account "
-            "and written to the vault's own file - not to ModOrganizer.ini, "
-            "where plugin settings are kept in plain text. Copying that file "
-            "to another account or machine will not carry the key with it.",
+            "-> API keys.\n\nIt is written to the vault's own file, not to "
+            "ModOrganizer.ini, where plugin settings are kept in plain text.",
             box)
         note.setWordWrap(True)
         inner.addWidget(note)
         return box
 
+    def _describe_protection(self) -> None:
+        """Say what this platform can actually offer. Never more."""
+        if self._vault.scheme == vault_mod.MACHINE:
+            self._phrase_note.setText(
+                "Running under Wine, where there is no OS secret to borrow. "
+                "Without a passphrase the key is only obfuscated: tied to "
+                "this machine and folder, so a copied file is useless - but "
+                "readable in place by anything that can read this plugin's "
+                "source. A passphrase is the only real protection here, and "
+                "is asked for once per session.")
+        elif self._vault.scheme == vault_mod.PASSPHRASE:
+            self._phrase_note.setText(
+                "The key is encrypted with your passphrase. Nothing on this "
+                "disk can open it without that, and if you forget it the "
+                "key is gone - generate a new one on Nexus.")
+        else:
+            self._phrase_note.setText(
+                "Windows encrypts the key for this user account. A "
+                "passphrase is optional here, and protects it even from "
+                "someone who has your unlocked Windows account.")
+
     def _refresh(self) -> None:
-        if not dpapi.available():
-            self._status.setText(
-                "Windows encryption (DPAPI) is not available here, so this "
-                "plugin will not store a key. It will not fall back to "
-                "writing one in plain text.")
-            return
+        self._describe_protection()
+        if self._vault.rewrapped:
+            self._vault.rewrapped = False
+            QMessageBox.warning(
+                self, NAME,
+                "Your key was stored by an earlier version through Wine's "
+                "version of Windows encryption, which looks like encryption "
+                "but is openable by anyone holding the file.\n\nIt has been "
+                "re-stored under this version's scheme. If that file was "
+                "ever backed up, shared or put in a support archive, treat "
+                "the key as exposed and generate a new one on Nexus.")
         if not self._vault.has_key:
             self._status.setText(
                 "No key stored. Plugins asking for one are being told there "
                 "is none, and are expected to carry on without it.")
             return
-        try:
+        if self._vault.needs_passphrase:
             self._status.setText(
-                "A key is stored ({}), encrypted for this Windows account."
-                .format(masked(self._vault.read())))
+                "A key is stored, protected with a passphrase. Type it "
+                "above and press Unlock to make it available to plugins "
+                "for this session.")
+            return
+        try:
+            self._status.setText("A key is stored ({}), {}.".format(
+                masked(self._vault.read()), self._vault.protection()))
         except vault_mod.Locked as exc:
             self._status.setText(
-                "There is a key here that this Windows account cannot open "
-                "- most likely the file came from another machine or user. "
-                "Remove it and paste the key again. ({})".format(exc))
+                "There is a key here that cannot be opened on this system "
+                "- most likely the file came from another machine, account "
+                "or folder. Remove it and paste the key again. ({})"
+                .format(exc))
+
+    def _unlock(self) -> None:
+        """Hand the vault a passphrase for a key already stored."""
+        if not self._vault.needs_passphrase:
+            QMessageBox.information(
+                self, NAME, "Nothing is waiting on a passphrase.")
+            return
+        typed = self._phrase.text()
+        if not typed:
+            QMessageBox.information(
+                self, NAME, "Type the passphrase first.")
+            return
+        self._vault.use_passphrase(typed)
+        try:
+            self._vault.read()
+        except vault_mod.Locked as exc:
+            self._vault.use_passphrase("")
+            QMessageBox.warning(self, NAME, str(exc))
+            return
+        self._phrase.clear()
+        self._refresh()
 
     def _save(self) -> None:
         typed = self._field.text().strip()
@@ -123,16 +189,24 @@ class VaultDialog(QDialog):
             QMessageBox.information(
                 self, NAME, "Nothing was typed, so nothing has changed.")
             return
+        phrase = self._phrase.text() if self._use_phrase.isChecked() else ""
+        if self._use_phrase.isChecked() and not phrase:
+            QMessageBox.information(
+                self, NAME,
+                "Type a passphrase, or clear the checkbox to store without "
+                "one.")
+            return
         try:
-            self._vault.store(typed)
+            self._vault.store(typed, phrase)
         except (dpapi.Unavailable, ValueError) as exc:
             QMessageBox.warning(self, NAME, "Not stored: {}".format(exc))
             return
         self._field.clear()
+        self._phrase.clear()
         self._refresh()
         QMessageBox.information(
-            self, NAME, "Stored ({}), encrypted for this Windows account."
-            .format(masked(typed)))
+            self, NAME, "Stored ({}), {}.".format(
+                masked(typed), self._vault.protection()))
 
     def _test(self) -> None:
         typed = self._field.text().strip()
@@ -242,7 +316,7 @@ class VaultDialog(QDialog):
     def _offer_migration(self) -> None:
         """Take over any key still sitting unencrypted in the MO2 ini."""
         stragglers = migrate.found(self._organizer)
-        if not stragglers or not dpapi.available():
+        if not stragglers:
             return
         owners = ", ".join(owner for owner, _, _ in stragglers)
         if QMessageBox.question(

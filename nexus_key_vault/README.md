@@ -1,7 +1,7 @@
 # Nexus API Key Vault
 
-An MO2 tool plugin that keeps **one** Nexus API key, encrypted for your
-Windows account, and lends it to any plugin that asks — so each plugin does
+An MO2 tool plugin that keeps **one** Nexus API key, sealed as strongly as
+your system allows, and lends it to any plugin that asks — so each plugin does
 not end up storing its own plain-text copy.
 
 **Tools → Nexus API Key.**
@@ -34,11 +34,23 @@ not hold.
 
 ## Where the key is kept
 
-`<MO2 plugin data>/nexus_key_vault/nexus_key.dat`, encrypted with **Windows
-DPAPI** against your user account. Copy that file to another machine or
-another Windows account and the key does not go with it — the OS refuses to
-decrypt it. Nothing is written to `ModOrganizer.ini`, which stores plugin
-settings in plain text.
+`<MO2 plugin data>/nexus_key_vault/nexus_key.dat`. Nothing is written to
+`ModOrganizer.ini`, which stores plugin settings in plain text.
+
+On Windows the key is encrypted with **DPAPI** against your user account, so
+copying that file to another machine or account does not carry the key with
+it — the OS refuses to decrypt it.
+
+**Under Wine (every Linux and macOS install) there is no such OS secret**, and
+Wine's own DPAPI only looks like encryption: its key comes from the username,
+a salt inside the file, and constants published in Wine's source and in ours.
+So it is refused, and the vault seals the key itself with scrypt and
+HMAC-SHA256 from the standard library. Tick **Protect with a passphrase** and
+that is real encryption. Without one, the key is tied to this machine,
+account and folder — which stops a *copied* file being useful, but is
+obfuscation rather than encryption, and the dialog says so in those words.
+There is no unattended option stronger than that on any platform: if the
+plugin can open the vault by itself, so can whatever copies the folder.
 
 ### What this does not protect against
 
@@ -48,12 +60,12 @@ false sense of security:
 **Any plugin running in MO2 can read the key.** Every Python plugin shares
 one interpreter, one process, and your user account. A plugin that wanted the
 key without asking could `import nexus_key_vault.vault` and call `read()`, or
-read this source to find the DPAPI entropy. There is no isolation between
+read this source to find the entropy. There is no isolation between
 plugins for the vault to hide behind, and anything claiming otherwise would
 be claiming something Windows does not offer here.
 
-What encryption at rest genuinely buys you is everything that happens to the
-*file* rather than in the process: instance backups, cloud-synced profile
+What sealing the key at rest genuinely buys you is everything that happens to
+the *file* rather than in the process: instance backups, cloud-synced profile
 folders, a support archive pasted into a Discord thread, a stolen drive,
 another account on a shared machine. Those are real, common ways a credential
 escapes, and this closes all of them.
