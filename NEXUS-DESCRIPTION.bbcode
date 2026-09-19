@@ -1,0 +1,79 @@
+[size=5][b]MO2 Nexus API Extender[/b][/size]
+
+[b]One Nexus API key, stored safely, shared by every plugin that needs it.[/b]
+
+[line]
+
+[size=4][b]What problem does this solve?[/b][/size]
+
+Mod Organizer 2 has its own Nexus login, but it will not hand that login to a plugin. So any plugin that wants to ask Nexus a question has to ask [i]you[/i] for an API key — and then keep its own copy.
+
+That leads to two annoyances:
+
+[list]
+[*][b]You paste the same key over and over[/b], once per plugin.
+[*][b]Each plugin stores it in plain text[/b] inside ModOrganizer.ini, where anything that can read the file can read your key — including anyone you send an instance backup to.
+[/list]
+
+This plugin fixes both. You enter your key [b]once[/b]. It is stored in an encrypted file of its own, and plugins ask this plugin for it instead of asking you.
+
+[line]
+
+[size=4][b]What you get[/b][/size]
+
+[list]
+[*][b]Enter your key once.[/b] Tools → Nexus API Key. There is a Test button, so you find out immediately whether the key works.
+[*][b]It is kept out of plain text.[/b] On Windows it is encrypted for your user account. A passphrase is available if you want it.
+[*][b]You can see who asked.[/b] The window lists every plugin that has requested your key, how many times, and when — and you can deny any of them.
+[*][b]It stops wasting your Nexus quota.[/b] Answers are cached and shared, so two plugins asking about the same mod cost one request between them instead of two.
+[*][b]It tidies up after other plugins.[/b] If it finds a key sitting in plain text in ModOrganizer.ini, it offers to take it into the vault and blank the old copy.
+[/list]
+
+[line]
+
+[size=4][b]Install[/b][/size]
+
+[list=1]
+[*]Download the archive.
+[*]Extract it into your Mod Organizer 2 [b]plugins[/b] folder, so that a folder called [b]nexus_key_vault[/b] sits alongside the other plugins.
+[*]Restart MO2.
+[*]Go to [b]Tools → Nexus API Key[/b] and paste your key.
+[/list]
+
+You get a key from [b]nexusmods.com → your profile → Site preferences → API keys[/b].
+
+[line]
+
+[size=4][b]Do I need this?[/b][/size]
+
+Only if you use a plugin that asks for it. On its own this plugin does not change your mod list or your game — it is somewhere to put a credential, not a mod manager feature. If a plugin's description says it needs the Nexus API Extender, this is that.
+
+[line]
+
+[size=4][b]Honest notes[/b][/size]
+
+[list]
+[*][b]Your MO2 Nexus login is not touched.[/b] Downloads, endorsements and update checks keep working exactly as before. This is a separate key.
+[*][b]This is a record, not a lock.[/b] Every plugin runs inside MO2 with your permissions, so a plugin determined to read your key would not have to ask politely. Denying one stops it using the published way in. Install plugins you trust.
+[*][b]Running under Wine, Proton or CrossOver?[/b] Windows' encryption is not real there — its keys are derivable from public information. The plugin detects this, refuses to pretend, and falls back to its own scheme. Without a passphrase your key is [i]obfuscated[/i] rather than encrypted, and the plugin tells you so in plain words. [b]Set a passphrase if that matters to you.[/b]
+[/list]
+
+[line]
+
+[size=4][b]For plugin authors[/b][/size]
+
+Three lines to get a working, cached, rate-limit-aware Nexus client:
+
+[code]
+from nexus_key_vault import api
+nexus = api.client(organizer, "My Plugin")
+reqs = nexus.requirements(nexus.game_id("skyrimspecialedition"), 266)
+[/code]
+
+It speaks Nexus v1, v2 (GraphQL) and v3. It returns [b]None[/b] rather than raising when there is no key, so your plugin degrades instead of breaking. The full interface is documented in the source repository and is stable at 1.0.0.
+
+[line]
+
+[size=4][b]Source[/b][/size]
+
+[url=https://github.com/jturnley/MO2-Nexus-API-Extender]github.com/jturnley/MO2-Nexus-API-Extender[/url] — open source, and worth a look before you trust anything with a credential.
