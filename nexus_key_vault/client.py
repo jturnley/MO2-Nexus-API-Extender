@@ -29,6 +29,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import tls
+
 GRAPHQL = "https://api.nexusmods.com/v2/graphql"
 REST = "https://api.nexusmods.com/v1"
 V3 = "https://api.nexusmods.com/v3"
@@ -65,6 +67,14 @@ def explain(exc: Exception) -> str:
         return "Too many requests for now (429) - wait and try again."
     if status:
         return "Nexus answered {}.".format(status)
+    # Before the generic case: a failed certificate check is a URLError
+    # too, and calling it "could not reach Nexus" sends people off testing
+    # ports and firewalls when the connection was fine.
+    problem = tls.certificate_problem(exc)
+    if problem:
+        return ("Reached Nexus, but this PC could not verify its "
+                "certificate ({}). That is Windows' certificate store, not "
+                "the key or the connection.".format(problem))
     if isinstance(exc, (urllib.error.URLError, OSError, TimeoutError)):
         return "Could not reach Nexus. Check the connection."
     return exc.__class__.__name__
@@ -183,7 +193,8 @@ class NexusClient:
     def _open(self, request: urllib.request.Request):
         self._wait()
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as fh:
+            with urllib.request.urlopen(request, timeout=self.timeout,
+                                        context=tls.context()) as fh:
                 self._note_limits(fh.headers)
                 return json.load(fh)
         except urllib.error.HTTPError as exc:

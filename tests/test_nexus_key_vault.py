@@ -508,6 +508,39 @@ def test_refreshing_restores_itself():
         check(nexus.refresh is True, "and unwinds")
 
 
+def test_shipped_root_is_the_real_isrg_root_x1():
+    import hashlib
+    import ssl
+    from nexus_key_vault import tls
+    der = ssl.PEM_cert_to_DER_cert(tls.ISRG_ROOT_X1)
+    check(hashlib.sha256(der).hexdigest() == tls.ISRG_ROOT_X1_SHA256,
+          "the embedded root matches its published fingerprint")
+    check(tls.ISRG_ROOT_X1_SHA256 == "96bcec06264976f37460779acf28c5a7"
+          "cfe8a3c0aae11a8ffcee05c0bddf08c6", "and that fingerprint is X1's")
+    ctx = tls.context()
+    check(ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname,
+          "verification stays on")
+    serials = {c.get("serialNumber") for c in ctx.get_ca_certs()}
+    check("8210CFB0D240E3594463E0BB63828B00" in serials,
+          "the root is loaded into the context")
+    check(tls.context() is ctx, "one context, built once")
+
+
+def test_certificate_failure_is_not_called_a_connection_failure():
+    import ssl
+    import urllib.error
+    bad = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    bad.verify_message = "certificate has expired"
+    said = client.explain(urllib.error.URLError(bad))
+    check("certificate has expired" in said, "the real reason is passed on")
+    check("Could not reach" not in said, "and it is not blamed on the line")
+    check("not the key" in said, "and not on the key")
+    check(client.explain(urllib.error.URLError("refused")).startswith(
+        "Could not reach"), "a dropped line still reads as one")
+    src = io.open(client.__file__, encoding="utf-8").read()
+    check("context=tls.context()" in src, "every request uses that context")
+
+
 for name, fn in sorted(list(globals().items())):
     if name.startswith("test_"):
         fn()

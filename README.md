@@ -95,6 +95,7 @@ key was weaker on disk than that version claimed.
 nexus_key_vault/      the plugin - copy this folder into MO2/plugins/
   api.py              the published surface: what other plugins import
   client.py           v1 / v2 / v3 Nexus client
+  tls.py              HTTPS that does not depend on one PC's cert store
   vault.py            the file, the key, the caller record
   dpapi.py            Windows encryption via ctypes (no pywin32)
   portable.py         the stdlib sealer used when DPAPI cannot be trusted
@@ -293,6 +294,25 @@ except api.NexusError as exc:
     if exc.status == 429:
         back_off()
 ```
+
+A certificate that cannot be verified gets its own message rather than
+"Could not reach Nexus": the connection worked, and the fix is nowhere near
+the key or the network.
+
+#### "Reached Nexus, but this PC could not verify its certificate"
+
+Nexus's certificate chains to Let's Encrypt's ISRG Root X1. MO2's Python
+checks that against the Windows certificate store, and two common states of
+that store break it on an otherwise healthy PC: Windows only downloads a
+root when its own TLS first needs it, which Python never triggers, and many
+PCs still hold the copy of ISRG Root X1 cross-signed by DST Root CA X3, which
+expired on 30 September 2024 and produces "certificate has expired".
+
+Since 1.0.1 the client ships ISRG Root X1 itself (checked against its
+published SHA-256 by the tests) and adds it to the system roots.
+Verification is never switched off. If the message still appears, open
+https://api.nexusmods.com in Edge once - that makes Windows fetch the
+current roots - and try again.
 
 ### Not part of the published API
 
