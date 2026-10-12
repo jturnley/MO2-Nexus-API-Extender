@@ -23,7 +23,20 @@ ISRG Root X1 is valid until 4 June 2035.
 
 from __future__ import annotations
 
-import ssl
+try:
+    import ssl
+except ImportError:
+    # MO2's Python without a working _ssl module - its _ssl.pyd or the
+    # libssl-3-x64.dll beside ModOrganizer.exe missing, renamed or
+    # shadowed by another copy. There is no HTTPS at all then, and this
+    # module must not take the plugin down with it: it loads, and every
+    # request fails with a message that says why.
+    ssl = None
+
+NO_SSL = ("MO2's Python could not load its SSL module, so it cannot make "
+          "any HTTPS request. Check that libssl-3-x64.dll and "
+          "libcrypto-3-x64.dll are next to ModOrganizer.exe, or reinstall "
+          "MO2.")
 
 ISRG_ROOT_X1_SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
 
@@ -63,9 +76,20 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 _context = None
 
 
-def context() -> ssl.SSLContext:
-    """The context every Nexus request uses: system roots + ISRG Root X1."""
+def available() -> bool:
+    """Can this Python make HTTPS requests at all?"""
+    return ssl is not None
+
+
+def context():
+    """The context every Nexus request uses: system roots + ISRG Root X1.
+
+    None when there is no SSL support, which urllib accepts and then fails
+    on cleanly at request time.
+    """
     global _context
+    if ssl is None:
+        return None
     if _context is None:
         ctx = ssl.create_default_context()
         try:
@@ -82,6 +106,8 @@ def certificate_problem(exc) -> str | None:
     urllib wraps the TLS failure in a URLError; the reason inside is what
     says whether this was the certificate or the line.
     """
+    if ssl is None:
+        return None
     reason = getattr(exc, "reason", exc)
     if isinstance(reason, ssl.SSLCertVerificationError):
         return reason.verify_message or str(reason)

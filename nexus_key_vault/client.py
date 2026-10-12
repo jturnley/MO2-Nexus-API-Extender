@@ -70,6 +70,8 @@ def explain(exc: Exception) -> str:
     # Before the generic case: a failed certificate check is a URLError
     # too, and calling it "could not reach Nexus" sends people off testing
     # ports and firewalls when the connection was fine.
+    if not tls.available():
+        return tls.NO_SSL
     problem = tls.certificate_problem(exc)
     if problem:
         return ("Reached Nexus, but this PC could not verify its "

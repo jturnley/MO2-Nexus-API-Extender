@@ -541,6 +541,28 @@ def test_certificate_failure_is_not_called_a_connection_failure():
     check("context=tls.context()" in src, "every request uses that context")
 
 
+def test_loads_and_explains_without_ssl():
+    # MO2's Python with a missing or shadowed libssl: the plugin must still
+    # load, and say why nothing works, rather than vanish from MO2.
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    probe = (
+        "import sys; sys.modules['ssl'] = None; sys.modules['_ssl'] = None\n"
+        "sys.path.insert(0, {!r})\n"
+        "from nexus_key_vault import api, client, tls\n"
+        "print(tls.available())\n"
+        "import urllib.error\n"
+        "print(client.explain(urllib.error.URLError('unknown url type: https')))\n"
+    ).format(root)
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                         text=True, timeout=60)
+    lines = out.stdout.splitlines()
+    check(out.returncode == 0 and lines[:1] == ["False"],
+          "the plugin loads on a Python with no SSL")
+    check(len(lines) > 1 and "could not load its SSL module" in lines[1],
+          "and says that is the problem")
+
+
 for name, fn in sorted(list(globals().items())):
     if name.startswith("test_"):
         fn()
