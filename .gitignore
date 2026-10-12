@@ -10,3 +10,6 @@ requirement_cache.json
 user_rules.json
 nexus_key.dat
 *.bak
+
+# Release zips, built from HEAD - attached to releases, not tracked.
+dist/
