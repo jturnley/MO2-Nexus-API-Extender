@@ -29,7 +29,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import tls
+from . import tls, winhttp
 
 GRAPHQL = "https://api.nexusmods.com/v2/graphql"
 REST = "https://api.nexusmods.com/v1"
@@ -82,6 +82,24 @@ def explain(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
+class _Status:
+    """An HTTP status from WinHTTP, shaped for :func:`explain`."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+
+def _windows_can_help(exc) -> bool:
+    """Did Python's HTTPS fail where Windows' own would not?
+
+    Two cases: this Python has no SSL module at all, or it reached Nexus
+    and could not verify the certificate against its copy of the store.
+    A timeout or a refused connection is the network, and Windows would
+    only fail the same way a second time.
+    """
+    return not tls.available() or bool(tls.certificate_problem(exc))
+
+
 class NexusClient:
     """Thin, honest, and safe to hold on to for the length of one job."""
 
@@ -99,6 +117,11 @@ class NexusClient:
         # downloads and every other plugin down with it.
         self.rate_limit: dict[str, int] = {}
         self._last = 0.0
+        # Set once Python's own HTTPS has failed in a way Windows can do
+        # better at (no SSL module, or a certificate the copied store
+        # cannot verify). From then on every request goes straight to
+        # WinHTTP rather than failing a handshake first each time.
+        self.via_windows = False
 
     @contextlib.contextmanager
     def refreshing(self, on: bool = True):
@@ -194,6 +217,8 @@ class NexusClient:
 
     def _open(self, request: urllib.request.Request):
         self._wait()
+        if self.via_windows:
+            return self._open_windows(request)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout,
                                         context=tls.context()) as fh:
@@ -204,8 +229,38 @@ class NexusClient:
                 self._note_limits(exc.headers)
             raise NexusError(explain(exc), getattr(exc, "code", None)) from None
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            raise NexusError(explain(exc)) from None
+            if not (_windows_can_help(exc) and winhttp.available()):
+                raise NexusError(explain(exc)) from None
+            first = explain(exc)
         except ValueError as exc:
+            raise NexusError("Nexus sent something unreadable.") from None
+        try:
+            payload = self._open_windows(request)
+        except NexusError as exc:
+            if exc.status is not None:
+                self.via_windows = True     # Windows got through
+                raise                       # and Nexus said no
+            raise NexusError("{} Windows' own HTTPS was tried as well: "
+                             "{}".format(first, exc)) from None
+        self.via_windows = True
+        return payload
+
+    def _open_windows(self, request: urllib.request.Request):
+        """The same request through WinHTTP, judged by the same rules."""
+        try:
+            status, headers, body = winhttp.request(
+                request.full_url, request.get_method(),
+                dict(request.header_items()), request.data, self.timeout,
+                self.user_agent)
+        except (winhttp.WinHttpError, ValueError) as exc:
+            raise NexusError("Could not reach Nexus through Windows: "
+                             "{}.".format(exc)) from None
+        self._note_limits(headers)
+        if status >= 400:
+            raise NexusError(explain(_Status(status)), status)
+        try:
+            return json.loads(body.decode("utf-8"))
+        except ValueError:
             raise NexusError("Nexus sent something unreadable.") from None
 
     # ---- v2 ------------------------------------------------------------

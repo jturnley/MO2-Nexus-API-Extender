@@ -563,6 +563,129 @@ def test_loads_and_explains_without_ssl():
           "and says that is the problem")
 
 
+def test_winhttp_header_block():
+    from nexus_key_vault import winhttp
+    block = winhttp.header_block({"apikey": "k", "User-Agent": "x",
+                                  "Accept": "application/json"})
+    check(block == "apikey: k\r\nAccept: application/json\r\n",
+          "one CRLF line per header, the user agent set on the session")
+    try:
+        winhttp.header_block({"apikey": "k\r\nX-Evil: 1"})
+        refused = False
+    except ValueError:
+        refused = True
+    check(refused, "a header with a line break is refused, not split")
+    check(winhttp.parse_headers("HTTP/1.1 200 OK\r\nX-RL-Hourly-Remaining: "
+                                "99\r\nContent-Type: a/b\r\n\r\n")
+          == {"x-rl-hourly-remaining": "99", "content-type": "a/b"},
+          "response headers are read with lowercased names")
+    try:
+        winhttp.request("http://api.nexusmods.com/v1")
+        plain = False
+    except ValueError:
+        plain = True
+    except winhttp.WinHttpError:
+        plain = True                # not on Windows: refused even earlier
+    check(plain, "nothing but https is sent")
+
+
+def _fallback_client(first_error, answer):
+    """A client whose urllib fails with ``first_error`` and whose WinHTTP
+    returns ``answer`` (a (status, headers, body) tuple or an exception)."""
+    import urllib.request
+    from nexus_key_vault import winhttp
+    calls = {"urllib": 0, "windows": 0}
+
+    def fake_urlopen(*_a, **_k):
+        calls["urllib"] += 1
+        raise first_error
+
+    def fake_request(*_a, **_k):
+        calls["windows"] += 1
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    saved = (urllib.request.urlopen, winhttp.request, winhttp.available)
+    urllib.request.urlopen = fake_urlopen
+    winhttp.request = fake_request
+    winhttp.available = lambda: True
+
+    def restore():
+        (urllib.request.urlopen, winhttp.request,
+         winhttp.available) = saved
+    nexus = client.NexusClient(key="SECRET-KEY-123")
+    nexus._wait = lambda: None
+    return nexus, calls, restore
+
+
+def test_winhttp_fallback_rules():
+    import ssl
+    import urllib.error
+    import urllib.request
+    from nexus_key_vault import winhttp
+    bad_cert = ssl.SSLCertVerificationError(1, "verify failed")
+    bad_cert.verify_message = "certificate has expired"
+    req = urllib.request.Request("https://api.nexusmods.com/v1/x.json",
+                                 headers={"apikey": "SECRET-KEY-123"})
+
+    nexus, calls, restore = _fallback_client(
+        urllib.error.URLError(bad_cert),
+        (200, {"x-rl-hourly-remaining": "42"}, b'{"ok": 1}'))
+    try:
+        check(nexus._open(req) == {"ok": 1},
+              "a certificate failure is retried through Windows")
+        check(nexus.remaining() == 42, "and its rate limits are read")
+        nexus._open(req)
+        check(calls == {"urllib": 1, "windows": 2},
+              "after which Python's HTTPS is not tried again")
+    finally:
+        restore()
+
+    nexus, calls, restore = _fallback_client(
+        urllib.error.URLError(TimeoutError("timed out")),
+        (200, {}, b"{}"))
+    try:
+        try:
+            nexus._open(req)
+        except client.NexusError:
+            pass
+        check(calls["windows"] == 0,
+              "a timeout is the network, not retried through Windows")
+    finally:
+        restore()
+
+    nexus, calls, restore = _fallback_client(
+        urllib.error.URLError(bad_cert), (401, {}, b"{}"))
+    try:
+        try:
+            nexus._open(req)
+            status = None
+        except client.NexusError as exc:
+            status, said = exc.status, str(exc)
+        check(status == 401 and "rejected the key" in said,
+              "an HTTP error through Windows reads as it would through Python")
+        check(nexus.via_windows, "and Windows is remembered as working")
+    finally:
+        restore()
+
+    nexus, calls, restore = _fallback_client(
+        urllib.error.URLError(bad_cert), winhttp.WinHttpError(12175, "send"))
+    try:
+        try:
+            nexus._open(req)
+            said = ""
+        except client.NexusError as exc:
+            said = str(exc)
+        check("certificate has expired" in said
+              and "Windows rejected the server's certificate" in said,
+              "when both fail, both reasons are given")
+        check("SECRET-KEY-123" not in said, "and the key is in neither")
+        check(not nexus.via_windows, "and Windows is not remembered")
+    finally:
+        restore()
+
+
 for name, fn in sorted(list(globals().items())):
     if name.startswith("test_"):
         fn()

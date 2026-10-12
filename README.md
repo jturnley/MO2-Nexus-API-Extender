@@ -96,6 +96,7 @@ nexus_key_vault/      the plugin - copy this folder into MO2/plugins/
   api.py              the published surface: what other plugins import
   client.py           v1 / v2 / v3 Nexus client
   tls.py              HTTPS that does not depend on one PC's cert store
+  winhttp.py          Windows' own HTTPS, when Python's cannot do the job
   vault.py            the file, the key, the caller record
   dpapi.py            Windows encryption via ctypes (no pywin32)
   portable.py         the stdlib sealer used when DPAPI cannot be trusted
@@ -310,9 +311,25 @@ expired on 30 September 2024 and produces "certificate has expired".
 
 Since 1.0.1 the client ships ISRG Root X1 itself (checked against its
 published SHA-256 by the tests) and adds it to the system roots.
-Verification is never switched off. If the message still appears, open
-https://api.nexusmods.com in Edge once - that makes Windows fetch the
-current roots - and try again.
+Verification is never switched off.
+
+#### When Python's HTTPS cannot work at all
+
+Since 1.0.2, two failures are retried through WinHTTP - Windows' own HTTPS,
+the one Edge uses, called through ctypes with nothing to install:
+
+- **The certificate cannot be verified** from Python's copy of the store.
+  Windows builds the chain itself and fetches a missing root from Windows
+  Update, as a browser would.
+- **MO2's Python has no SSL module** ("DLL load failed while importing
+  _ssl"), usually because `libssl-3-x64.dll` or `libcrypto-3-x64.dll` next
+  to `ModOrganizer.exe` is missing, quarantined or shadowed by another copy.
+
+Once Windows has answered, the client stays on WinHTTP for the rest of its
+life rather than failing a handshake before every request. A timeout or a
+refused connection is not retried: that is the network, and Windows would
+fail the same way. Certificate checking is never relaxed on either path,
+and the key never appears in an error from either.
 
 ### Not part of the published API
 
