@@ -46,6 +46,8 @@ import os
 import platform
 import secrets
 
+from ._i18n import translate
+
 MAGIC = b"NKV2"
 SALT = 16
 NONCE = 12
@@ -131,11 +133,13 @@ def seal(secret: bytes, material: bytes, scheme: int) -> bytes:
 def scheme_of(blob: bytes) -> int:
     """Which scheme sealed this, so the caller knows what to ask for."""
     if len(blob) < len(MAGIC) + 1 or not blob.startswith(MAGIC):
-        raise Tampered("This is not a vault file written by this plugin.")
+        raise Tampered(translate(
+            "Portable", "This is not a vault file written by this plugin."))
     scheme = blob[len(MAGIC)]
     if scheme not in NAMES:
-        raise Tampered("This vault file uses a scheme this version does "
-                       "not know about.")
+        raise Tampered(translate(
+            "Portable", "This vault file uses a scheme this version does "
+            "not know about."))
     return scheme
 
 
@@ -143,7 +147,8 @@ def unseal(blob: bytes, material: bytes) -> bytes:
     scheme = scheme_of(blob)
     head = len(MAGIC) + 1
     if len(blob) < head + SALT + NONCE + TAG:
-        raise Tampered("The vault file is too short to be complete.")
+        raise Tampered(translate(
+            "Portable", "The vault file is too short to be complete."))
     salt = blob[head:head + SALT]
     nonce = blob[head + SALT:head + SALT + NONCE]
     cipher = blob[head + SALT + NONCE:-TAG]
@@ -154,9 +159,12 @@ def unseal(blob: bytes, material: bytes) -> bytes:
     # wrong secret or an edited file, and we should not act on the bytes
     # either way.
     if not hmac.compare_digest(tag, expected):
-        raise WrongSecret(
-            "The vault could not be opened with this "
-            + ("passphrase." if scheme == SCHEME_PASSPHRASE
-               else "machine and install folder."))
+        if scheme == SCHEME_PASSPHRASE:
+            raise WrongSecret(translate(
+                "Portable", "The vault could not be opened with this "
+                "passphrase."))
+        raise WrongSecret(translate(
+            "Portable", "The vault could not be opened with this machine "
+            "and install folder."))
     stream = _keystream(enc, nonce, len(cipher))
     return bytes(a ^ b for a, b in zip(cipher, stream))

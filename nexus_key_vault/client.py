@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 
 from . import tls, winhttp
+from ._i18n import translate
 
 GRAPHQL = "https://api.nexusmods.com/v2/graphql"
 REST = "https://api.nexusmods.com/v1"
@@ -58,28 +59,41 @@ def explain(exc: Exception) -> str:
     """
     status = getattr(exc, "status", None) or getattr(exc, "code", None)
     if status == 401:
-        return "Nexus rejected the key (401). Check it was copied in full."
+        return translate("NexusClient", "Nexus rejected the key (401). "
+                         "Check it was copied in full.")
     if status == 403:
-        return "Nexus refused the request (403)."
+        return translate("NexusClient", "Nexus refused the request (403).")
     if status == 404:
-        return "Nexus has no such record (404)."
+        return _NOT_FOUND()
     if status == 429:
-        return "Too many requests for now (429) - wait and try again."
+        return translate("NexusClient", "Too many requests for now (429) - "
+                         "wait and try again.")
     if status:
-        return "Nexus answered {}.".format(status)
+        return translate("NexusClient", "Nexus answered {}.").format(status)
     # Before the generic case: a failed certificate check is a URLError
     # too, and calling it "could not reach Nexus" sends people off testing
     # ports and firewalls when the connection was fine.
     if not tls.available():
-        return tls.NO_SSL
+        return tls.no_ssl()
     problem = tls.certificate_problem(exc)
     if problem:
-        return ("Reached Nexus, but this PC could not verify its "
-                "certificate ({}). That is Windows' certificate store, not "
-                "the key or the connection.".format(problem))
+        return translate(
+            "NexusClient",
+            "Reached Nexus, but this PC could not verify its certificate "
+            "({}). That is Windows' certificate store, not the key or the "
+            "connection.").format(problem)
     if isinstance(exc, (urllib.error.URLError, OSError, TimeoutError)):
-        return "Could not reach Nexus. Check the connection."
+        return translate("NexusClient",
+                         "Could not reach Nexus. Check the connection.")
     return exc.__class__.__name__
+
+
+def _NOT_FOUND() -> str:
+    return translate("NexusClient", "Nexus has no such record (404).")
+
+
+def _UNREADABLE() -> str:
+    return translate("NexusClient", "Nexus sent something unreadable.")
 
 
 class _Status:
@@ -172,7 +186,7 @@ class NexusClient:
             kind, material)
         if hit:
             if value is None:
-                raise NexusError("Nexus has no such record (404).", 404)
+                raise NexusError(_NOT_FOUND(), 404)
             return value
         try:
             value = fetch()
@@ -233,15 +247,17 @@ class NexusClient:
                 raise NexusError(explain(exc)) from None
             first = explain(exc)
         except ValueError as exc:
-            raise NexusError("Nexus sent something unreadable.") from None
+            raise NexusError(_UNREADABLE()) from None
         try:
             payload = self._open_windows(request)
         except NexusError as exc:
             if exc.status is not None:
                 self.via_windows = True     # Windows got through
                 raise                       # and Nexus said no
-            raise NexusError("{} Windows' own HTTPS was tried as well: "
-                             "{}".format(first, exc)) from None
+            raise NexusError(translate(
+                "NexusClient",
+                "{} Windows' own HTTPS was tried as well: {}").format(
+                    first, exc)) from None
         self.via_windows = True
         return payload
 
@@ -253,15 +269,17 @@ class NexusClient:
                 dict(request.header_items()), request.data, self.timeout,
                 self.user_agent)
         except (winhttp.WinHttpError, ValueError) as exc:
-            raise NexusError("Could not reach Nexus through Windows: "
-                             "{}.".format(exc)) from None
+            raise NexusError(translate(
+                "NexusClient",
+                "Could not reach Nexus through Windows: {}.").format(
+                    exc)) from None
         self._note_limits(headers)
         if status >= 400:
             raise NexusError(explain(_Status(status)), status)
         try:
             return json.loads(body.decode("utf-8"))
         except ValueError:
-            raise NexusError("Nexus sent something unreadable.") from None
+            raise NexusError(_UNREADABLE()) from None
 
     # ---- v2 ------------------------------------------------------------
 
@@ -309,7 +327,8 @@ class NexusClient:
         if errors:
             first = errors[0].get("message") if isinstance(errors[0], dict) \
                 else str(errors[0])
-            raise NexusError("Nexus rejected the query: {}".format(first))
+            raise NexusError(translate(
+                "NexusClient", "Nexus rejected the query: {}").format(first))
         return payload.get("data") or {}
 
     def game_id(self, domain: str) -> int | None:
@@ -368,7 +387,8 @@ class NexusClient:
         a request that is certain to come back 401.
         """
         if not self.key:
-            raise NexusError("The v1 API needs a key and none is stored.")
+            raise NexusError(translate(
+                "NexusClient", "The v1 API needs a key and none is stored."))
         return self._cached("raw", "v1/" + path.lstrip("/"),
                             lambda: self._open(urllib.request.Request(
                                 "{}/{}".format(REST, path.lstrip("/")),
@@ -391,7 +411,8 @@ class NexusClient:
         Returns the ``data`` object, since v3 wraps every response in one.
         """
         if not self.key:
-            raise NexusError("The v3 API needs a key and none is stored.")
+            raise NexusError(translate(
+                "NexusClient", "The v3 API needs a key and none is stored."))
         return self._cached("raw", "v3/" + path.lstrip("/"),
                             lambda: self._v3(path))
 

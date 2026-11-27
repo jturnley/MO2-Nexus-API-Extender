@@ -7,6 +7,9 @@ several plugins share should come with somewhere to see that sharing.
 Nothing in here ever displays the key.  The field is masked, is never
 pre-filled from storage, and the status line describes what is stored
 instead of showing it.
+
+Every string goes through ``self.tr`` (context ``VaultDialog``) and is
+formatted after translation, so a translator sees whole sentences.
 """
 
 from __future__ import annotations
@@ -57,18 +60,19 @@ class VaultDialog(QDialog):
     # ---- the key -------------------------------------------------------
 
     def _key_box(self) -> QGroupBox:
-        box = QGroupBox("Your Nexus key", self)
+        box = QGroupBox(self.tr("Your Nexus key"), self)
         inner = QVBoxLayout(box)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Key:", box))
+        row.addWidget(QLabel(self.tr("Key:"), box))
         self._field = QLineEdit(box)
         self._field.setEchoMode(QLineEdit.EchoMode.Password)
-        self._field.setPlaceholderText("Paste a key here to store it")
+        self._field.setPlaceholderText(
+            self.tr("Paste a key here to store it"))
         row.addWidget(self._field, 1)
         inner.addLayout(row)
 
-        show = QCheckBox("Show what I am typing", box)
+        show = QCheckBox(self.tr("Show what I am typing"), box)
         show.toggled.connect(
             lambda on: self._field.setEchoMode(
                 QLineEdit.EchoMode.Normal if on
@@ -76,7 +80,8 @@ class VaultDialog(QDialog):
         inner.addWidget(show)
 
         row = QHBoxLayout()
-        self._use_phrase = QCheckBox("Protect with a passphrase:", box)
+        self._use_phrase = QCheckBox(self.tr("Protect with a passphrase:"),
+                                     box)
         row.addWidget(self._use_phrase)
         self._phrase = QLineEdit(box)
         self._phrase.setEchoMode(QLineEdit.EchoMode.Password)
@@ -90,19 +95,20 @@ class VaultDialog(QDialog):
         inner.addWidget(self._phrase_note)
 
         row = QHBoxLayout()
-        for label, slot in (("Save", self._save), ("Test", self._test),
-                            ("Unlock", self._unlock),
-                            ("Remove stored key", self._clear)):
+        for label, slot in ((self.tr("Save"), self._save),
+                            (self.tr("Test"), self._test),
+                            (self.tr("Unlock"), self._unlock),
+                            (self.tr("Remove stored key"), self._clear)):
             button = QPushButton(label, box)
             button.clicked.connect(slot)
             row.addWidget(button)
         row.addStretch(1)
         inner.addLayout(row)
 
-        note = QLabel(
+        note = QLabel(self.tr(
             "Get one from nexusmods.com -> your profile -> Site preferences "
             "-> API keys.\n\nIt is written to the vault's own file, not to "
-            "ModOrganizer.ini, where plugin settings are kept in plain text.",
+            "ModOrganizer.ini, where plugin settings are kept in plain text."),
             box)
         note.setWordWrap(True)
         inner.addWidget(note)
@@ -111,67 +117,67 @@ class VaultDialog(QDialog):
     def _describe_protection(self) -> None:
         """Say what this platform can actually offer. Never more."""
         if self._vault.scheme == vault_mod.MACHINE:
-            self._phrase_note.setText(
+            self._phrase_note.setText(self.tr(
                 "Running under Wine, where there is no OS secret to borrow. "
                 "Without a passphrase the key is only obfuscated: tied to "
                 "this machine and folder, so a copied file is useless - but "
                 "readable in place by anything that can read this plugin's "
                 "source. A passphrase is the only real protection here, and "
-                "is asked for once per session.")
+                "is asked for once per session."))
         elif self._vault.scheme == vault_mod.PASSPHRASE:
-            self._phrase_note.setText(
+            self._phrase_note.setText(self.tr(
                 "The key is encrypted with your passphrase. Nothing on this "
                 "disk can open it without that, and if you forget it the "
-                "key is gone - generate a new one on Nexus.")
+                "key is gone - generate a new one on Nexus."))
         else:
-            self._phrase_note.setText(
+            self._phrase_note.setText(self.tr(
                 "Windows encrypts the key for this user account. A "
                 "passphrase is optional here, and protects it even from "
-                "someone who has your unlocked Windows account.")
+                "someone who has your unlocked Windows account."))
 
     def _refresh(self) -> None:
         self._describe_protection()
         if self._vault.rewrapped:
             self._vault.rewrapped = False
-            QMessageBox.warning(
-                self, NAME,
+            QMessageBox.warning(self, NAME, self.tr(
                 "Your key was stored by an earlier version through Wine's "
                 "version of Windows encryption, which looks like encryption "
                 "but is openable by anyone holding the file.\n\nIt has been "
                 "re-stored under this version's scheme. If that file was "
                 "ever backed up, shared or put in a support archive, treat "
-                "the key as exposed and generate a new one on Nexus.")
+                "the key as exposed and generate a new one on Nexus."))
         if not self._vault.has_key:
-            self._status.setText(
+            self._status.setText(self.tr(
                 "No key stored. Plugins asking for one are being told there "
-                "is none, and are expected to carry on without it.")
+                "is none, and are expected to carry on without it."))
             return
         if self._vault.needs_passphrase:
-            self._status.setText(
+            self._status.setText(self.tr(
                 "A key is stored, protected with a passphrase. Type it "
                 "above and press Unlock to make it available to plugins "
-                "for this session.")
+                "for this session."))
             return
         try:
-            self._status.setText("A key is stored ({}), {}.".format(
-                masked(self._vault.read()), self._vault.protection()))
+            self._status.setText(self.tr(
+                "A key is stored ({}), {}.").format(
+                    masked(self._vault.read()), self._vault.protection()))
         except vault_mod.Locked as exc:
-            self._status.setText(
+            self._status.setText(self.tr(
                 "There is a key here that cannot be opened on this system "
                 "- most likely the file came from another machine, account "
-                "or folder. Remove it and paste the key again. ({})"
+                "or folder. Remove it and paste the key again. ({})")
                 .format(exc))
 
     def _unlock(self) -> None:
         """Hand the vault a passphrase for a key already stored."""
         if not self._vault.needs_passphrase:
             QMessageBox.information(
-                self, NAME, "Nothing is waiting on a passphrase.")
+                self, NAME, self.tr("Nothing is waiting on a passphrase."))
             return
         typed = self._phrase.text()
         if not typed:
             QMessageBox.information(
-                self, NAME, "Type the passphrase first.")
+                self, NAME, self.tr("Type the passphrase first."))
             return
         self._vault.use_passphrase(typed)
         try:
@@ -186,27 +192,26 @@ class VaultDialog(QDialog):
     def _save(self) -> None:
         typed = self._field.text().strip()
         if not typed:
-            QMessageBox.information(
-                self, NAME, "Nothing was typed, so nothing has changed.")
+            QMessageBox.information(self, NAME, self.tr(
+                "Nothing was typed, so nothing has changed."))
             return
         phrase = self._phrase.text() if self._use_phrase.isChecked() else ""
         if self._use_phrase.isChecked() and not phrase:
-            QMessageBox.information(
-                self, NAME,
+            QMessageBox.information(self, NAME, self.tr(
                 "Type a passphrase, or clear the checkbox to store without "
-                "one.")
+                "one."))
             return
         try:
             self._vault.store(typed, phrase)
         except (dpapi.Unavailable, ValueError) as exc:
-            QMessageBox.warning(self, NAME, "Not stored: {}".format(exc))
+            QMessageBox.warning(
+                self, NAME, self.tr("Not stored: {}").format(exc))
             return
         self._field.clear()
         self._phrase.clear()
         self._refresh()
-        QMessageBox.information(
-            self, NAME, "Stored ({}), {}.".format(
-                masked(typed), self._vault.protection()))
+        QMessageBox.information(self, NAME, self.tr("Stored ({}), {}.").format(
+            masked(typed), self._vault.protection()))
 
     def _test(self) -> None:
         typed = self._field.text().strip()
@@ -216,29 +221,30 @@ class VaultDialog(QDialog):
             self._result.setText(str(exc))
             return
         if not key:
-            self._result.setText(
-                "Nothing to test - the box is empty and no key is stored.")
+            self._result.setText(self.tr(
+                "Nothing to test - the box is empty and no key is stored."))
             return
-        self._result.setText("Checking...")
+        self._result.setText(self.tr("Checking..."))
         self._result.repaint()
         probe = client_mod.NexusClient(key, user_agent="Nexus-Key-Vault/1.0")
         try:
             categories = probe.categories(self._domain)
         except client_mod.NexusError as exc:
-            self._result.setText("That key did not work: {}".format(exc))
+            self._result.setText(
+                self.tr("That key did not work: {}").format(exc))
             return
-        self._result.setText(
-            "Works - Nexus returned {} categories for {} over v1. The "
-            "same key reaches v3; v2's public queries need none."
-            .format(len(categories), self._domain))
+        self._result.setText(self.tr(
+            "Works - Nexus returned %n categories for {} over v1. The "
+            "same key reaches v3; v2's public queries need none.",
+            None, len(categories)).format(self._domain))
 
     def _clear(self) -> None:
         if not self._vault.has_key:
             return
         if QMessageBox.question(
                 self, NAME,
-                "Remove the stored key? Plugins asking for one will be told "
-                "there is none.",
+                self.tr("Remove the stored key? Plugins asking for one will "
+                        "be told there is none."),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes:
@@ -249,17 +255,18 @@ class VaultDialog(QDialog):
     # ---- who has asked -------------------------------------------------
 
     def _callers_box(self) -> QGroupBox:
-        box = QGroupBox("Plugins that have asked for it", self)
+        box = QGroupBox(self.tr("Plugins that have asked for it"), self)
         inner = QVBoxLayout(box)
-        inner.addWidget(QLabel(
+        inner.addWidget(QLabel(self.tr(
             "Every plugin runs inside MO2 as you do, so this list is a "
             "record rather than a lock: a plugin determined to read the key "
             "would not have to ask. Denying one stops any plugin using the "
-            "published way in.", box))
+            "published way in."), box))
 
         self._table = QTableWidget(0, 4, box)
         self._table.setHorizontalHeaderLabels(
-            ["Plugin", "Times asked", "Last asked", "Allowed"])
+            [self.tr("Plugin"), self.tr("Times asked"),
+             self.tr("Last asked"), self.tr("Allowed")])
         self._table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
@@ -267,9 +274,9 @@ class VaultDialog(QDialog):
         inner.addWidget(self._table, 1)
 
         row = QHBoxLayout()
-        for label, slot in (("Allow", lambda: self._set(True)),
-                            ("Deny", lambda: self._set(False)),
-                            ("Forget", self._forget)):
+        for label, slot in ((self.tr("Allow"), lambda: self._set(True)),
+                            (self.tr("Deny"), lambda: self._set(False)),
+                            (self.tr("Forget"), self._forget)):
             button = QPushButton(label, box)
             button.clicked.connect(slot)
             row.addWidget(button)
@@ -282,6 +289,7 @@ class VaultDialog(QDialog):
     def _fill_callers(self) -> None:
         names = sorted(self._vault.asked)
         self._table.setRowCount(len(names))
+        allowed, denied = self.tr("yes"), self.tr("NO")
         for row, name in enumerate(names):
             entry = self._vault.asked[name]
             when = entry.get("last") or 0
@@ -289,7 +297,7 @@ class VaultDialog(QDialog):
                                   time.localtime(when)) if when else "-"
             for column, text in enumerate((
                     name, str(entry.get("count") or 0), stamp,
-                    "yes" if entry.get("allowed", True) else "NO")):
+                    allowed if entry.get("allowed", True) else denied)):
                 self._table.setItem(row, column, QTableWidgetItem(text))
         if names:
             self._table.selectRow(0)
@@ -321,16 +329,17 @@ class VaultDialog(QDialog):
         owners = ", ".join(owner for owner, _, _ in stragglers)
         if QMessageBox.question(
                 self, NAME,
-                "These plugins keep a Nexus key of their own in plain "
-                "text in ModOrganizer.ini: {}.\n\nThe ini is not "
-                "encrypted, so that copy can be read by anything that "
-                "can read the file - including anyone you send an "
-                "instance backup to.\n\nMove it into the vault and "
-                "blank the plain-text copy?\n\nThis touches only "
-                "those plugins' own settings. MO2's own Nexus login is "
-                "stored separately and is not affected: downloads, "
-                "endorsements and update checks keep working."
-                .format(owners),
+                self.tr(
+                    "These plugins keep a Nexus key of their own in plain "
+                    "text in ModOrganizer.ini: {}.\n\nThe ini is not "
+                    "encrypted, so that copy can be read by anything that "
+                    "can read the file - including anyone you send an "
+                    "instance backup to.\n\nMove it into the vault and "
+                    "blank the plain-text copy?\n\nThis touches only "
+                    "those plugins' own settings. MO2's own Nexus login is "
+                    "stored separately and is not affected: downloads, "
+                    "endorsements and update checks keep working."
+                ).format(owners),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
         ) != QMessageBox.StandardButton.Yes:
@@ -346,9 +355,8 @@ class VaultDialog(QDialog):
             if migrate.clear(self._organizer, owner, setting):
                 cleared += 1
         self._refresh()
-        QMessageBox.information(
-            self, NAME,
-            "{} key(s) taken into the vault, {} plain-text copy(ies) "
-            "blanked.\n\nMO2 rewrites its ini on exit, so the old value may "
-            "still be visible in the file until you close MO2.".format(
-                moved, cleared))
+        QMessageBox.information(self, NAME, "{}\n{}\n\n{}".format(
+            self.tr("%n key(s) taken into the vault.", None, moved),
+            self.tr("%n plain-text copy(ies) blanked.", None, cleared),
+            self.tr("MO2 rewrites its ini on exit, so the old value may "
+                    "still be visible in the file until you close MO2.")))

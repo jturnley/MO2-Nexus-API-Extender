@@ -10,7 +10,7 @@ import mobase
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtWidgets import QMessageBox
 
-from . import api, ui
+from . import _i18n, api, ui
 
 NAME = "Nexus API Key Vault"
 DEFAULT_DOMAIN = "skyrimspecialedition"
@@ -23,6 +23,10 @@ class NexusKeyVault(mobase.IPluginTool):
 
     def init(self, organizer: "mobase.IOrganizer") -> bool:
         self._organizer = organizer
+        try:
+            _i18n.install(organizer)
+        except Exception:
+            pass                # untranslated is fine; not loading is not
         return True
 
     def name(self) -> str:
@@ -74,7 +78,7 @@ class NexusKeyVault(mobase.IPluginTool):
         except Exception as exc:                  # a broken vault file
             QMessageBox.warning(
                 getattr(self, "_parent", None), NAME,
-                "The vault could not be opened: {}".format(exc))
+                self.tr("The vault could not be opened: {}").format(exc))
             return
         dialog.exec()
 

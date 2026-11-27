@@ -32,6 +32,8 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 
+from ._i18n import translate
+
 # Bound to this plugin and this file format, so a blob sealed here is not
 # interchangeable with one sealed by something else on the same account.
 ENTROPY = b"nexus-key-vault/1"
@@ -101,17 +103,24 @@ def _call(fn, data: bytes, what: str, trusted: bool = True) -> bytes:
     if not data:
         raise Unavailable("nothing to {}".format(what))
     if not (available() if trusted else present()):
-        raise Unavailable(
-            "Windows DPAPI is not available on this system, so there is "
-            "nowhere safe to keep the key.")
+        raise Unavailable(translate(
+            "Dpapi", "Windows DPAPI is not available on this system, so "
+            "there is nowhere safe to keep the key."))
     out = _Blob()
     payload = _Blob.of(data)          # both named, so neither is collected
     entropy = _Blob.of(ENTROPY)       # while the call is still using it
     ok = fn(ctypes.byref(payload), None, ctypes.byref(entropy),
             None, None, CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(out))
     if not ok:
-        raise Unavailable("Windows could not {} the key (error {}).".format(
-            what, ctypes.GetLastError()))
+        # Whole sentences, not a verb dropped into one: word order is not
+        # the same in every language.
+        if what == "protect":
+            text = translate("Dpapi",
+                             "Windows could not protect the key (error {}).")
+        else:
+            text = translate("Dpapi",
+                             "Windows could not read the key (error {}).")
+        raise Unavailable(text.format(ctypes.GetLastError()))
     return out.take()
 
 

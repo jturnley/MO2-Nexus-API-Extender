@@ -32,6 +32,8 @@ import json
 import os
 import time
 
+from ._i18n import translate
+
 FILENAME = "nexus_cache.json"
 VERSION = 1
 
@@ -150,6 +152,7 @@ class Cache:
     def summary(self) -> str:
         total = self.hits + self.misses
         if not total:
-            return "{} cached responses".format(self.size)
-        return "{} cached responses, {}% of lookups served from disk".format(
-            self.size, int(round(100.0 * self.hits / total)))
+            return translate("Cache", "%n cached responses", None, self.size)
+        return translate(
+            "Cache", "%n cached responses, {}% of lookups served from disk",
+            None, self.size).format(int(round(100.0 * self.hits / total)))

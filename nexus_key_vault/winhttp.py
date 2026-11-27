@@ -24,6 +24,8 @@ import ctypes
 import sys
 import urllib.parse
 
+from ._i18n import QT_TRANSLATE_NOOP, translate
+
 ACCESS_AUTOMATIC_PROXY = 4      # Windows 8.1+: system and per-user proxy
 ACCESS_DEFAULT_PROXY = 0        # older: the system proxy only
 FLAG_SECURE = 0x00800000
@@ -33,13 +35,18 @@ QUERY_FLAG_NUMBER = 0x20000000
 ERROR_INSUFFICIENT_BUFFER = 122
 
 # What a WinHTTP failure means, in the words the client uses for urllib's.
+# Translated where the error is raised; the step in brackets is a technical
+# token (open, connect, send...) and stays as it is.
 REASONS = {
-    12002: "the request timed out",
-    12007: "the server name could not be resolved",
-    12029: "the connection could not be made",
-    12030: "the connection was dropped",
-    12152: "the server sent an invalid response",
-    12175: "Windows rejected the server's certificate",
+    12002: QT_TRANSLATE_NOOP("WinHttp", "the request timed out"),
+    12007: QT_TRANSLATE_NOOP("WinHttp",
+                             "the server name could not be resolved"),
+    12029: QT_TRANSLATE_NOOP("WinHttp", "the connection could not be made"),
+    12030: QT_TRANSLATE_NOOP("WinHttp", "the connection was dropped"),
+    12152: QT_TRANSLATE_NOOP("WinHttp",
+                             "the server sent an invalid response"),
+    12175: QT_TRANSLATE_NOOP("WinHttp",
+                             "Windows rejected the server's certificate"),
 }
 
 
@@ -47,7 +54,10 @@ class WinHttpError(OSError):
     """A request that did not complete. Never carries a header or the URL."""
 
     def __init__(self, code: int, step: str) -> None:
-        reason = REASONS.get(code, "Windows error {}".format(code))
+        if code in REASONS:
+            reason = translate("WinHttp", REASONS[code])
+        else:
+            reason = translate("WinHttp", "Windows error {}").format(code)
         OSError.__init__(self, "{} ({})".format(reason, step))
         self.code = code
 

@@ -387,3 +387,43 @@ python tests/test_nexus_key_vault.py
 
 The one that matters most asserts against the raw bytes of the stored file:
 the key must not appear in it in any encoding.
+
+## Translations
+
+Every string the plugin shows goes through Qt's translation system, so a
+language needs no code changes - only a `.ts` file.
+
+The plugin reads MO2's own language setting and loads
+`nexus_key_vault/translations/nexus_key_vault_<language>.qm` from its own
+folder, so a translated release is still one folder to copy. A `.qm` of the
+same name in MO2's `translations/` folder works too.
+
+To add a language:
+
+```bash
+pylupdate6 nexus_key_vault -ts nexus_key_vault/translations/nexus_key_vault_ru.ts
+```
+
+Translate the `.ts` in Qt Linguist, and send it as a pull request. Releases
+build the `.qm` from it. Please say in the pull request that the
+translation may be included in the plugin under the terms below.
+
+## Copyright and permissions
+
+Copyright © 2026 jturnley (Illrigger on Nexus Mods). All rights reserved.
+
+No license is granted. The source is published so it can be read and
+audited, and so plugin authors can see exactly what they are calling.
+
+- **You may** read it, run it, and call its published API from your own
+  plugin.
+- **You may not** redistribute this plugin, or any modified version of it,
+  anywhere - including translated, repackaged or "fixed" builds - without
+  written permission.
+
+This plugin holds people's Nexus API keys. Every copy users run has to be
+one that has been reviewed, and that is only true of the official releases
+on GitHub and Nexus Mods.
+
+Translations and fixes are welcome as pull requests and ship in the
+official releases with credit. Anyone is welcome to link to those releases.

@@ -33,10 +33,17 @@ except ImportError:
     # request fails with a message that says why.
     ssl = None
 
-NO_SSL = ("MO2's Python could not load its SSL module, so it cannot make "
+from ._i18n import QT_TRANSLATE_NOOP, translate
+
+# English as written; no_ssl() is the same sentence in MO2's language.
+NO_SSL = QT_TRANSLATE_NOOP("Tls", "MO2's Python could not load its SSL module, so it cannot make "
           "any HTTPS request. Check that libssl-3-x64.dll and "
           "libcrypto-3-x64.dll are next to ModOrganizer.exe, or reinstall "
           "MO2.")
+
+
+def no_ssl() -> str:
+    return translate("Tls", NO_SSL)
 
 ISRG_ROOT_X1_SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
 

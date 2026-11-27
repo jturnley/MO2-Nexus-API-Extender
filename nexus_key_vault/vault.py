@@ -33,6 +33,7 @@ import os
 import time
 
 from . import dpapi, portable
+from ._i18n import QT_TRANSLATE_NOOP, translate
 
 FILENAME = "nexus_key.dat"
 VERSION = 2
@@ -42,6 +43,8 @@ MACHINE = portable.NAMES[portable.SCHEME_MACHINE]
 PASSPHRASE = portable.NAMES[portable.SCHEME_PASSPHRASE]
 
 # What the file says about itself, matched to how it was actually sealed.
+# Written into the file, so deliberately not translated: the file reads the
+# same whichever language wrote it.
 NOTES = {
     DPAPI: "The key is encrypted by Windows for this user account. "
            "Copying this file to another account or machine will not "
@@ -55,11 +58,14 @@ NOTES = {
              "can open it in place. Use a passphrase if that matters.",
 }
 
-# How the same thing reads in a sentence to the user.
+# How the same thing reads in a sentence to the user. Translated in
+# protection(), because this table is built before any translator exists.
 PROTECTION = {
-    DPAPI: "encrypted by Windows for this user account",
-    PASSPHRASE: "encrypted with your passphrase",
-    MACHINE: "obfuscated for this machine and folder - not encryption",
+    DPAPI: QT_TRANSLATE_NOOP("Vault",
+                             "encrypted by Windows for this user account"),
+    PASSPHRASE: QT_TRANSLATE_NOOP("Vault", "encrypted with your passphrase"),
+    MACHINE: QT_TRANSLATE_NOOP(
+        "Vault", "obfuscated for this machine and folder - not encryption"),
 }
 
 
@@ -74,8 +80,9 @@ def masked(key: str, tail: int = 4) -> str:
     if not key:
         return ""
     if len(key) <= tail * 2:
-        return "{} characters".format(len(key))
-    return "{} characters, ending {}".format(len(key), key[-tail:])
+        return translate("Vault", "%n characters", None, len(key))
+    return translate("Vault", "%n characters, ending {}", None,
+                     len(key)).format(key[-tail:])
 
 
 class Locked(Exception):
@@ -161,7 +168,9 @@ class Vault:
 
     def protection(self) -> str:
         """One phrase for the dialog. Never stronger than the truth."""
-        return PROTECTION.get(self._scheme, "stored")
+        if self._scheme in PROTECTION:
+            return translate("Vault", PROTECTION[self._scheme])
+        return translate("Vault", "stored")
 
     @property
     def needs_passphrase(self) -> bool:
@@ -195,15 +204,16 @@ class Vault:
         try:
             return self._open().decode("utf-8").strip()
         except UnicodeDecodeError as exc:
-            raise Locked("The stored key is not readable.") from exc
+            raise Locked(translate(
+                "Vault", "The stored key is not readable.")) from exc
 
     def _open(self) -> bytes:
         if self._scheme == DPAPI:
             return self._open_dpapi()
         if self.needs_passphrase:
-            raise NeedsPassphrase(
-                "This vault is protected with a passphrase. Enter it to "
-                "unlock the key.")
+            raise NeedsPassphrase(translate(
+                "Vault", "This vault is protected with a passphrase. Enter "
+                "it to unlock the key."))
         try:
             return portable.unseal(self._sealed, self._material())
         except (portable.Tampered, portable.WrongSecret) as exc:
@@ -221,9 +231,10 @@ class Vault:
             except dpapi.Unavailable as exc:
                 raise Locked(str(exc)) from exc
         if not dpapi.present():
-            raise Locked(
-                "This key was stored by Windows on another system and "
-                "cannot be opened here. Remove it and enter the key again.")
+            raise Locked(translate(
+                "Vault", "This key was stored by Windows on another system "
+                "and cannot be opened here. Remove it and enter the key "
+                "again."))
         # Wine: readable, but only because it was never properly sealed.
         try:
             secret = dpapi.unseal_regardless(self._sealed)
@@ -251,7 +262,7 @@ class Vault:
         """
         key = (key or "").strip()
         if not key:
-            raise ValueError("no key given")
+            raise ValueError(translate("Vault", "no key given"))
         if passphrase:
             self._passphrase = passphrase
             self._scheme = PASSPHRASE

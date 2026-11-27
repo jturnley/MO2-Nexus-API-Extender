@@ -24,6 +24,7 @@ import os
 from . import cache as _cache
 from . import client as _client
 from . import vault as _vault
+from . import _i18n
 
 # Re-exported so callers do not import private module paths.
 NexusClient = _client.NexusClient
@@ -85,7 +86,7 @@ def protection(organizer) -> str:
     try:
         return open_vault(organizer).protection()
     except Exception:
-        return "unavailable"
+        return _i18n.translate("Api", "unavailable")
 
 
 def key(organizer, requester: str = "") -> str:
