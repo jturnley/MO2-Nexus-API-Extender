@@ -42,11 +42,19 @@ PAUSE = 0.35
 
 
 class NexusError(Exception):
-    """A request failed. The message never contains the key."""
+    """A request failed. The message never contains the key.
 
-    def __init__(self, message: str, status: int | None = None) -> None:
+    ``rejected`` is True when Nexus answered and refused the query itself
+    (GraphQL errors in a 200 response), as opposed to the request failing
+    to arrive. Test this rather than the message: the message is
+    translated into MO2's language.
+    """
+
+    def __init__(self, message: str, status: int | None = None,
+                 rejected: bool = False) -> None:
         super().__init__(message)
         self.status = status
+        self.rejected = rejected
 
 
 def explain(exc: Exception) -> str:
@@ -328,7 +336,8 @@ class NexusClient:
             first = errors[0].get("message") if isinstance(errors[0], dict) \
                 else str(errors[0])
             raise NexusError(translate(
-                "NexusClient", "Nexus rejected the query: {}").format(first))
+                "NexusClient", "Nexus rejected the query: {}").format(first),
+                rejected=True)
         return payload.get("data") or {}
 
     def game_id(self, domain: str) -> int | None:

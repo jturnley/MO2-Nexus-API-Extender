@@ -285,7 +285,11 @@ Everything network-facing raises `NexusError`, which carries `.status` (the
 HTTP code, or `None`) and a message built from that code rather than from the
 exception's string form - so a key cannot ride out in an error. GraphQL
 answers 200 with failures inside the body; `graphql()` raises on those too,
-so you do not have to remember that.
+so you do not have to remember that, and sets `.rejected` on the error.
+
+Test `.status` and `.rejected`, never the message: messages are translated
+into MO2's language, so text that reads "rejected" in English will not in
+Russian.
 
 ```python
 try:

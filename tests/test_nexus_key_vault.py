@@ -180,6 +180,23 @@ def test_errors_never_carry_the_key():
           "rate limit explained")
 
 
+
+def test_a_refused_query_is_flagged_not_just_worded():
+    # Callers decide what to do about a refusal (split the batch, stamp a
+    # dead id) - and the message is translated, so they must not have to
+    # read it to find out.
+    nexus = client.NexusClient()
+    nexus._open = lambda request: {"errors": [{"message": "Mod not found"}]}
+    try:
+        nexus.graphql("query { x }", cache=False)
+        check(False, "a GraphQL error raises")
+    except client.NexusError as exc:
+        check(exc.rejected is True, "a refused query is flagged rejected")
+        check(exc.status is None, "and carries no HTTP status")
+    check(client.NexusError("x").rejected is False,
+          "an ordinary failure is not flagged")
+
+
 def test_cache_round_trip_and_expiry():
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, "nexus_cache.json")
