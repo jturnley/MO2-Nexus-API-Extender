@@ -285,7 +285,8 @@ Everything network-facing raises `NexusError`, which carries `.status` (the
 HTTP code, or `None`) and a message built from that code rather than from the
 exception's string form - so a key cannot ride out in an error. GraphQL
 answers 200 with failures inside the body; `graphql()` raises on those too,
-so you do not have to remember that, and sets `.rejected` on the error.
+so you do not have to remember that, and (since 1.1.0) sets `.rejected` on
+the error.
 
 Test `.status` and `.rejected`, never the message: messages are translated
 into MO2's language, so text that reads "rejected" in English will not in
@@ -341,7 +342,7 @@ and the key never appears in an error from either.
 `clear`, `note`, `allowed`, `set_allowed` and `forget` are how the dialog
 works. They are reachable, and they are **not** covered by the 1.0.0
 stability promise - `store()` and `clear()` write the user's credential.
-The on-disk format moved to version 2 in 1.1.0 for exactly that reason;
+The on-disk format moved to version 2 before 1.0.0 for exactly that reason;
 version 1 files are still read and upgraded in place.
 Read through `api.key()`, and do not write at all: if your plugin needs a key
 and the vault has none, ask the user and store it under your own plugin name.
